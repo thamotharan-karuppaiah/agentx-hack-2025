@@ -1,0 +1,10 @@
+{
+	"$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+	"files": {
+		"include": ["src/features/Tasks/**"],
+		"ignore": ["**/node_modules/**", "**/dist/**"]
+	},
+	"organizeImports": {
+		"enabled": true
+	}
+}

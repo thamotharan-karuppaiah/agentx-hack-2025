@@ -1,0 +1,113 @@
+/* Override specific node type styles */
+:global(.react-flow__node-input){
+  padding: 0 !important;
+  border: none !important;
+  background: none !important;
+  width: auto !important;
+  border-radius: 8px !important;
+  font-size: inherit !important;
+  color: inherit !important;
+  text-align: left !important;
+}
+
+.workflow {
+  @apply flex-1 h-full relative;
+}
+
+.reactFlow {
+  @apply bg-background;
+}
+
+/* Ghost node styles */
+.workflow :global(.react-flow__node-ghost) {
+  opacity: 0.8;
+  transition: all 0.2s ease;
+}
+
+.workflow :global(.react-flow__node-ghost:hover) {
+  opacity: 1;
+  transform: scale(1.02);
+}
+
+/* Edge highlighting styles */
+.highlightedEdge {
+  @apply cursor-crosshair;
+}
+
+.highlightedEdge path {
+  stroke-dasharray: 5;
+  animation: dashedLine 1s linear infinite;
+}
+
+/* Connection point styles */
+.workflow :global(.react-flow__edge) {
+  pointer-events: all;
+}
+
+.workflow :global(.react-flow__edge):hover::after {
+  content: '+';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: #6366f1;
+  color: white;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  pointer-events: none;
+  z-index: 1000;
+}
+
+/* Connection handle styles */
+.workflow :global(.react-flow__handle) {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #6366f1;
+  border: 2px solid white;
+  transition: all 0.2s ease;
+}
+
+.workflow :global(.react-flow__handle.connecting) {
+  animation: pulse 1.5s infinite;
+}
+
+.workflow :global(.react-flow__handle.valid-connection) {
+  background: #22c55e;
+  transform: scale(1.5);
+  box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.2);
+}
+
+.workflow :global(.react-flow__handle.invalid-connection) {
+  background: #ef4444;
+  transform: scale(1.5);
+  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.2);
+}
+
+/* Animation for dashed lines */
+@keyframes dashedLine {
+  from {
+    stroke-dashoffset: 10;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* Animation for connection handles */
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.4);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(99, 102, 241, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(99, 102, 241, 0);
+  }
+}

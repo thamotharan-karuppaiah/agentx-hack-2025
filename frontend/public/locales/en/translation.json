@@ -1,0 +1,33 @@
+{
+  "common": {
+    "login": "Login",
+    "signup": "Sign Up",
+    "email": "Email",
+    "password": "Password",
+    "submit": "Submit",
+    "cancel": "Cancel",
+    "copyright": "© {{year}} Freshworks Inc. All rights reserved."
+  },
+  "dashboard": {
+    "welcome": "Welcome to your dashboard",
+    "workspace": "Workspace",
+    "sheets": "Sheets"
+  },
+  "workspace": {
+    "create": "Create Workspace",
+    "name": "Workspace Name",
+    "description": "Description"
+  },
+  "sheets": {
+    "newSheet": "New Sheet",
+    "deleteSheet": "Delete Sheet",
+    "renameSheet": "Rename Sheet"
+  },
+  "auth": {
+    "needAccount": "Need a AgentX account?",
+    "createAccount": "Create account here ->",
+    "loginHere": "Login here ->",
+    "welcomeBack": "Welcome back!",
+    "forgotPassword": "Forgot password?"
+  }
+} 

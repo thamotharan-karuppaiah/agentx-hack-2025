@@ -1,0 +1,20 @@
+{
+  "rewrites": [
+    { 
+      "source": "/api/:path*",
+      "destination": "http://104.198.128.79:8082/:path*"
+    },
+    { "source": "/assets/:path*", "destination": "/assets/:path*" },
+    { "source": "/(.*)", "destination": "/" }
+  ],
+  "builds": [
+    {
+      "src": "package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "buildCommand": "npm run build:prod",
+        "outputDirectory": "dist"
+      }
+    }
+  ]
+}

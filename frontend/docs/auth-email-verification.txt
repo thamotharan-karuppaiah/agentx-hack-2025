@@ -1,0 +1,108 @@
+EMAIL VERIFICATION FLOW DOCUMENTATION
+
+FRONTEND COMPONENTS
+------------------
+1. src/features/Auth/EmailVerification.tsx
+   - Handles email verification after signup
+   - Shows verification status
+   - Handles resend verification email
+   - Shows countdown timer for resend
+   - Uses AuthService for API calls
+
+2. src/services/AuthService.ts
+   Additional methods:
+   - verifyEmail(token: string)
+   - resendVerificationEmail(email: string)
+
+3. src/routes.tsx
+   New route definition:
+   - /verify-email/:token -> EmailVerification
+
+
+FRONTEND ROUTES
+--------------
+/verify-email/:token    Verifies email using token from verification email
+
+
+API ENDPOINTS
+------------
+
+1. Verify Email
+   Endpoint: POST /identity-service/auth/verify-email
+   Description: Verifies user's email using the token
+
+   Request Body:
+   {
+     "token": "string"  // Verification token from email
+   }
+
+   Success Response (200 OK):
+   {
+     "message": "Email successfully verified"
+   }
+
+   Error Response (400 Bad Request):
+   {
+     "title": "Error message",
+     "status": 400
+   }
+
+
+2. Resend Verification Email
+   Endpoint: POST /identity-service/auth/resend-verification
+   Description: Resends verification email to user
+
+   Request Body:
+   {
+     "email": "string"  // User's email address
+   }
+
+   Success Response (200 OK):
+   {
+     "message": "Verification email sent"
+   }
+
+   Error Response (400 Bad Request):
+   {
+     "title": "Error message",
+     "status": 400
+   }
+
+
+TESTING SCENARIOS
+----------------
+1. Email Verification Flow:
+   - Valid token -> Should verify email and show success
+   - Invalid token -> Should show error message
+   - Expired token -> Should show error with resend option
+   - Already verified -> Should show appropriate message
+
+2. Resend Verification Flow:
+   - Valid email -> Should resend verification email
+   - Too many requests -> Should show rate limit message
+   - Invalid email -> Should show error message
+
+Frontend Implementation Notes:
+---------------------------
+1. Verification Page States:
+   - Loading: Show spinner while verifying
+   - Success: Show success message with login button
+   - Error: Show error with resend option
+   - Resend Cooldown: Show countdown timer
+
+2. Rate Limiting:
+   - 60-second cooldown between resend attempts
+   - Visual countdown timer for user feedback
+   - Disable resend button during cooldown
+
+3. User Experience:
+   - Clear success/error messages
+   - Automatic verification on page load
+   - Easy navigation back to login
+   - Visual feedback for all actions
+
+4. Error Handling:
+   - Token validation errors
+   - Network errors
+   - Rate limit errors
+   - Server errors 

@@ -9,18 +9,17 @@
 
   :root {
     --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
+    --foreground: 205.42deg 62.11% 18.63%;
     --card: 0 0% 100%;
     --card-foreground: 240 10% 3.9%;
     --popover: 0 0% 100%;
     --popover-foreground: 240 10% 3.9%;
-    --primary:  239 84% 67%; /*modified*/
+    --primary:  207.19deg 45.71% 27.45%; /*modified*/
     --primary-foreground: 0 0% 98%;
     --secondary: 240 4.8% 95.9%;
     --secondary-foreground: 240 5.9% 10%;
     --muted: 240 4.8% 95.9%;
     --muted-foreground: 240 4% 46%; /*modified */ 
-
     --accent: 240 4.8% 95.9%;
     --accent-foreground: 240 5.9% 10%;
     --destructive: 0 72.22% 50.59%;
@@ -38,8 +37,8 @@
     --sidebar-foreground: 215 25% 27%; /*modified*/
     --sidebar-primary: 222 47% 11%; /*modified*/
     --sidebar-primary-foreground: 210 40% 98%; /*modified*/
-    --sidebar-accent: 227 100% 94%; /*modified*/
-    --sidebar-accent-foreground: 240 10% 4%; /*modified*/
+    --sidebar-accent: 207.5deg 85.71% 94.51%; /*modified*/
+    --sidebar-accent-foreground: 205.42deg 62.11% 18.63%; /*modified*/
     --sidebar-border: transparent;
     --sidebar-ring: 217.2 91.2% 59.8%;
   }

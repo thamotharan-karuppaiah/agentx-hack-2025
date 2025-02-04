@@ -513,9 +513,9 @@ const WorkflowMain: React.FC = () => {
                 <TableHead className="min-w-[150px] text-center whitespace-nowrap">
                   {renderSortableHeader('Total Runs', 'totalRuns')}
                 </TableHead>
-                <TableHead className="min-w-[120px] text-center whitespace-nowrap">
+                {/* <TableHead className="min-w-[120px] text-center whitespace-nowrap">
                   {renderSortableHeader('Linked Sheets', 'linkedGrids')}
-                </TableHead>
+                </TableHead> */}
                 <TableHead className="min-w-[200px] whitespace-nowrap">
                   {renderSortableHeader('Last Edited', 'lastEdited')}
                 </TableHead>
@@ -548,7 +548,7 @@ const WorkflowMain: React.FC = () => {
                     </TableCell>
                     <TableCell className="min-w-[140px]">{renderVersionCell(workflow)}</TableCell>
                     <TableCell className="min-w-[150px] text-center">{renderTotalRunsCell(workflow.totalRuns)}</TableCell>
-                    <TableCell className="min-w-[120px] text-center">{renderLinkedGridsCell(workflow.linkedGrids, workflow.id)}</TableCell>
+                    {/* <TableCell className="min-w-[120px] text-center">{renderLinkedGridsCell(workflow.linkedGrids, workflow.id)}</TableCell> */}
                     <TableCell className="min-w-[200px]">{workflow.lastEdited}</TableCell>
                     <TableCell className="min-w-[85px]">{renderActionMenu(workflow)}</TableCell>
                   </TableRow>

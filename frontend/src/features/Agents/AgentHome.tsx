@@ -16,6 +16,7 @@ import {
   Pencil,
   ChevronUp,
   ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -31,11 +32,29 @@ import { useToast } from "@/hooks/use-toast";
 import { agentService } from '@/services/agentService';
 import type { Agent } from './types';
 import { CreateAgentModal } from './components/CreateAgentModal';
+import { formatDistanceToNow } from 'date-fns';
+import { cn } from "@/lib/utils";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface SortConfig {
   key: keyof Agent | null;
   direction: 'asc' | 'desc';
 }
+
+const formatRelativeDate = (dateString: string | null | undefined) => {
+  if (!dateString) return '-';
+  try {
+    const date = new Date(dateString);
+    return formatDistanceToNow(date, { addSuffix: true });
+  } catch {
+    return '-';
+  }
+};
 
 const AgentHome: React.FC = () => {
   const [loading, setLoading] = useState(false);
@@ -51,6 +70,7 @@ const AgentHome: React.FC = () => {
   const [isDeleting, setIsDeleting] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [selectedAgent, setSelectedAgent] = useState<Agent | undefined>();
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     const fetchAgents = async () => {
@@ -236,6 +256,19 @@ const AgentHome: React.FC = () => {
     }
   }, [toast]);
 
+  const toggleRow = (agentId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setExpandedRows(prev => {
+      const next = new Set(prev);
+      if (next.has(agentId)) {
+        next.delete(agentId);
+      } else {
+        next.add(agentId);
+      }
+      return next;
+    });
+  };
+
   return (
     <>
       <div className="flex flex-col min-h-full">
@@ -291,27 +324,75 @@ const AgentHome: React.FC = () => {
                     renderTableSkeleton()
                   ) : (
                     getSortedAgents(getSearchedAgents(agents)).map((agent) => (
-                      <TableRow 
-                        key={agent.id}
-                        className="cursor-pointer"
-                        onClick={() => {
-                          navigate(`${agent.id}`);
-                        }}
-                      >
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <Bot className="w-4 h-4 text-blue-500" />
-                            <span>{agent.name}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell>{agent.description}</TableCell>
-                        <TableCell>{agent.tools.join(', ')}</TableCell>
-                        <TableCell>{agent.lastRunDate}</TableCell>
-                        <TableCell>{agent.lastModified}</TableCell>
-                        <TableCell>{agent.created}</TableCell>
-                        <TableCell>{agent.tasksDone}</TableCell>
-                        <TableCell>{renderActionMenu(agent)}</TableCell>
-                      </TableRow>
+                      <React.Fragment key={agent.id}>
+                        <TableRow 
+                          className="cursor-pointer"
+                          onClick={() => {
+                            navigate(`${agent.id}`);
+                          }}
+                        >
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <button
+                                      onClick={(e) => toggleRow(agent.id, e)}
+                                      className={cn(
+                                        "p-1 rounded",
+                                        agent.tools.length > 0 
+                                          ? "hover:bg-accent cursor-pointer" 
+                                          : "opacity-50 cursor-not-allowed"
+                                      )}
+                                      disabled={agent.tools.length === 0}
+                                    >
+                                      {expandedRows.has(agent.id) ? (
+                                        <ChevronDown className="h-4 w-4" />
+                                      ) : (
+                                        <ChevronRight className="h-4 w-4" />
+                                      )}
+                                    </button>
+                                  </TooltipTrigger>
+                                  {agent.tools.length === 0 && (
+                                    <TooltipContent>
+                                      <p>No tools added</p>
+                                    </TooltipContent>
+                                  )}
+                                </Tooltip>
+                              </TooltipProvider>
+                              <Bot className="w-4 h-4 text-blue-500" />
+                              <span>{agent.name}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell>{agent.description}</TableCell>
+                          <TableCell>{agent.tools.length} tools</TableCell>
+                          <TableCell>{formatRelativeDate(agent.lastRunDate)}</TableCell>
+                          <TableCell>{formatRelativeDate(agent.lastModified)}</TableCell>
+                          <TableCell>{formatRelativeDate(agent.created)}</TableCell>
+                          <TableCell>{agent.tasksDone}</TableCell>
+                          <TableCell>{renderActionMenu(agent)}</TableCell>
+                        </TableRow>
+
+                        {/* Expanded Tools Section */}
+                        {expandedRows.has(agent.id) && agent.tools.map((tool, idx) => (
+                          <TableRow 
+                            key={`${agent.id}-tool-${idx}`}
+                            className="bg-muted/50"
+                          >
+                            <TableCell className="pl-12">
+                              <div className="flex items-center gap-2">
+                                <span>{tool.icon}</span>
+                                <span className="text-sm">{tool.name}</span>
+                              </div>
+                            </TableCell>
+                            <TableCell colSpan={7}>
+                              <span className="text-sm text-muted-foreground">
+                                {tool.prompt || `Defaults to: Completes a ${tool.name} and returns the results.`}
+                              </span>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </React.Fragment>
                     ))
                   )}
                 </TableBody>

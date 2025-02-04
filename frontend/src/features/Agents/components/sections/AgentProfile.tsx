@@ -49,7 +49,7 @@ interface AgentProfileProps {
 
 export default function AgentProfile({ form }: AgentProfileProps) {
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 p-6">
       <div>
         <h2 className="text-lg font-semibold mb-4">Agent profile</h2>
         <FormField

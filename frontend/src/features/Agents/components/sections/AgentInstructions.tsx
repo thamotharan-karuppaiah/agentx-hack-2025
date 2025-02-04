@@ -253,7 +253,7 @@ export default function AgentInstructions({ form }: AgentInstructionsProps) {
   }, [editor, form]);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 p-6">
       <div>
         <h2 className="text-lg font-semibold">Agent instructions</h2>
         <p className="text-sm text-muted-foreground">

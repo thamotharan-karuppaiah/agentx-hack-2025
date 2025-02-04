@@ -278,7 +278,7 @@ export function CreateAgentModal({
             {/* Right Content Area */}
             <div className="flex-1">
               <ScrollArea className="h-full">
-                <div className="p-6">
+                <div className="">
                   {ActiveComponent && (
                     <ActiveComponent form={form} />
                   )}

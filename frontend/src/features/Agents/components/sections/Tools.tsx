@@ -68,15 +68,6 @@ const mockTools: Tool[] = [
   // Add more mock tools here
 ];
 
-const categories = [
-  { id: 'your-tools', label: 'Your tools' },
-  { id: 'all-templates', label: 'All templates' },
-  { id: 'popular', label: 'Popular', count: 1 },
-  { id: 'knowledge', label: 'Knowledge Integration', count: 1 },
-  { id: 'marketing', label: 'Marketing', count: 3 },
-  { id: 'operations', label: 'Operations', count: 40 },
-];
-
 interface ToolsProps {
   form: UseFormReturn<any>;
 }
@@ -112,6 +103,34 @@ function AddToolView({ onAddTool, existingTools }: { onAddTool: (tool: Tool) => 
     return existingTools.some(t => t.id === toolId);
   };
 
+  // Calculate category counts dynamically
+  const getCategoryCounts = () => {
+    const counts: Record<string, number> = {
+      'your-tools': workflows.length,
+      'all-templates': mockTools.length
+    };
+
+    mockTools.forEach(tool => {
+      tool.category.forEach(cat => {
+        counts[cat] = (counts[cat] || 0) + 1;
+      });
+    });
+
+    return counts;
+  };
+
+  const categories = [
+    { id: 'your-tools', label: 'Your tools' },
+    { id: 'all-templates', label: 'All templates' },
+    { id: 'popular', label: 'Popular' },
+    { id: 'knowledge', label: 'Knowledge Integration' },
+    { id: 'marketing', label: 'Marketing' },
+    { id: 'operations', label: 'Operations' },
+  ].map(cat => ({
+    ...cat,
+    count: getCategoryCounts()[cat.label] || 0
+  }));
+
   return (
     <div className="space-y-6">
       <div>
@@ -131,88 +150,101 @@ function AddToolView({ onAddTool, existingTools }: { onAddTool: (tool: Tool) => 
         />
       </div>
 
-      <Tabs defaultValue="your-tools" value={activeCategory} onValueChange={setActiveCategory}>
-        <TabsList className="flex flex-wrap gap-2">
-          {categories.map((category) => (
-            <TabsTrigger key={category.id} value={category.id} className="flex gap-2">
-              {category.label}
-              {category.count && (
-                <span className="text-xs text-muted-foreground">
-                  {category.count}
-                </span>
-              )}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-
-        <TabsContent value="your-tools" className="mt-4">
-          <div className="grid grid-cols-1 gap-4">
-            {filteredTools(workflows).map((workflow) => (
-              <div
-                key={workflow.id}
-                className="flex items-center justify-between p-4 border rounded-lg"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="text-2xl">{(workflow as Workflow).emoji || '🔄'}</span>
-                  <div>
-                    <h3 className="font-medium">{workflow.name}</h3>
-                    <p className="text-sm text-muted-foreground">
-                      {workflow.description}
-                    </p>
-                  </div>
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => onAddTool({
-                    id: workflow.id,
-                    name: workflow.name,
-                    icon: (workflow as Workflow).emoji || '🔄',
-                    description: workflow.description || '',
-                    category: ['Your tools']
-                  })}
-                  disabled={isToolAdded(workflow.id)}
+      <div className="relative w-full overflow-hidden">
+        <ScrollArea className="w-full" orientation="horizontal">
+          <Tabs 
+            defaultValue="your-tools" 
+            value={activeCategory} 
+            onValueChange={setActiveCategory}
+            className="w-max" // Allow tabs to expand beyond container
+          >
+            <TabsList className="flex gap-2 p-1">
+              {categories.map((category) => (
+                <TabsTrigger 
+                  key={category.id} 
+                  value={category.id} 
+                  className="flex gap-2 whitespace-nowrap"
                 >
-                  {isToolAdded(workflow.id) ? 'Added' : 'Add'}
-                </Button>
-              </div>
-            ))}
-          </div>
-        </TabsContent>
+                  {category.label}
+                  {category.count > 0 && (
+                    <span className="text-xs text-muted-foreground">
+                      {category.count}
+                    </span>
+                  )}
+                </TabsTrigger>
+              ))}
+            </TabsList>
 
-        {categories.slice(1).map((category) => (
-          <TabsContent key={category.id} value={category.id} className="mt-4">
-            <div className="grid grid-cols-1 gap-4">
-              {filteredTools(mockTools)
-                .filter(tool => (tool as Tool).category.includes(category.label))
-                .map((tool) => (
+            <TabsContent value="your-tools" className="mt-4">
+              <div className="grid grid-cols-1 gap-4">
+                {filteredTools(workflows).map((workflow) => (
                   <div
-                    key={tool.id}
+                    key={workflow.id}
                     className="flex items-center justify-between p-4 border rounded-lg"
                   >
                     <div className="flex items-center gap-3">
-                      <span className="text-2xl">{(tool as Tool).icon}</span>
+                      <span className="text-2xl">{(workflow as Workflow).emoji || '🔄'}</span>
                       <div>
-                        <h3 className="font-medium">{tool.name}</h3>
+                        <h3 className="font-medium">{workflow.name}</h3>
                         <p className="text-sm text-muted-foreground">
-                          {tool.description}
+                          {workflow.description}
                         </p>
                       </div>
                     </div>
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => onAddTool(tool as Tool)}
-                      disabled={isToolAdded(tool.id)}
+                      onClick={() => onAddTool({
+                        id: workflow.id,
+                        name: workflow.name,
+                        icon: (workflow as Workflow).emoji || '🔄',
+                        description: workflow.description || '',
+                        category: ['Your tools']
+                      })}
+                      disabled={isToolAdded(workflow.id)}
                     >
-                      {isToolAdded(tool.id) ? 'Added' : 'Add'}
+                      {isToolAdded(workflow.id) ? 'Added' : 'Add'}
                     </Button>
                   </div>
                 ))}
-            </div>
-          </TabsContent>
-        ))}
-      </Tabs>
+              </div>
+            </TabsContent>
+
+            {categories.slice(1).map((category) => (
+              <TabsContent key={category.id} value={category.id} className="mt-4">
+                <div className="grid grid-cols-1 gap-4">
+                  {filteredTools(mockTools)
+                    .filter(tool => (tool as Tool).category.includes(category.label))
+                    .map((tool) => (
+                      <div
+                        key={tool.id}
+                        className="flex items-center justify-between p-4 border rounded-lg"
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className="text-2xl">{(tool as Tool).icon}</span>
+                          <div>
+                            <h3 className="font-medium">{tool.name}</h3>
+                            <p className="text-sm text-muted-foreground">
+                              {tool.description}
+                            </p>
+                          </div>
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => onAddTool(tool as Tool)}
+                          disabled={isToolAdded(tool.id)}
+                        >
+                          {isToolAdded(tool.id) ? 'Added' : 'Add'}
+                        </Button>
+                      </div>
+                    ))}
+                </div>
+              </TabsContent>
+            ))}
+          </Tabs>
+        </ScrollArea>
+      </div>
     </div>
   );
 }
@@ -230,141 +262,165 @@ export default function Tools({ form }: ToolsProps) {
     };
 
     form.setValue('tools', [...tools, newTool]);
-  };
-
-  const handleDeleteTool = (toolId: string) => {
-    form.setValue('tools', tools.filter((t: Tool) => t.id !== toolId));
-  };
-
-  const updateToolConfig = (toolId: string, field: keyof Tool, value: any) => {
-    form.setValue('tools', tools.map((t: Tool) => 
-      t.id === toolId ? { ...t, [field]: value } : t
-    ));
+    setSelectedTool(tool.id);
   };
 
   return (
-    <div className="flex h-full gap-6">
+    <div className="flex h-full">
       {/* Left Sidebar - Tool List */}
       <div className="w-64 border-r">
-        <div className="p-4">
-          <h3 className="text-sm font-medium mb-4">Tool settings / All tools</h3>
-          <ScrollArea className="h-[calc(100vh-300px)]">
-            <div className="space-y-2">
+        <div className="flex flex-col h-full">
+          {/* Header */}
+          <div className="p-4 border-b">
+            <h3 className="text-sm font-medium text-muted-foreground">
+              Tool settings / All tools
+            </h3>
+          </div>
+
+          {/* Tools List */}
+          <ScrollArea className="flex-1">
+            <div className="p-4 space-y-1">
               {tools.map((tool: Tool) => (
                 <div
                   key={tool.id}
                   className={cn(
-                    "flex items-center gap-2 p-2 rounded-md cursor-pointer",
+                    "flex items-center justify-between py-1.5 px-2 rounded-md cursor-pointer hover:bg-accent/50 group",
                     selectedTool === tool.id && "bg-accent"
                   )}
                   onClick={() => setSelectedTool(tool.id)}
                 >
-                  <span>{tool.icon}</span>
-                  <span className="text-sm">{tool.name}</span>
+                  <div className="flex items-center gap-2">
+                    <span>{tool.icon}</span>
+                    <span className="text-sm">{tool.name}</span>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 opacity-0 group-hover:opacity-100"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                    }}
+                  >
+                    <span className="text-xs">!</span>
+                  </Button>
                 </div>
               ))}
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full mt-4"
-                onClick={() => setSelectedTool('add-new')}
-              >
-                <Plus className="h-4 w-4 mr-2" />
-                Add tool
-              </Button>
             </div>
           </ScrollArea>
+
+          {/* Add Tool Button */}
+          <div className="p-4 border-t">
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full"
+              onClick={() => setSelectedTool('add-new')}
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Add tool
+            </Button>
+          </div>
         </div>
       </div>
 
-      {/* Right Content - Tool Configuration */}
-      <div className="flex-1 p-4">
+      {/* Right Content - Tool Configuration or Add Tool View */}
+      <div className="flex-1">
         <ScrollArea className="h-[calc(100vh-300px)]">
           {selectedTool === 'add-new' ? (
-            <AddToolView onAddTool={handleAddTool} existingTools={tools} />
+            <div className="p-6">
+              <AddToolView onAddTool={handleAddTool} existingTools={tools} />
+            </div>
           ) : selectedTool ? (
-            <div className="space-y-6">
-              {tools.map((tool: Tool) => {
-                if (tool.id !== selectedTool) return null;
-                
-                return (
-                  <div key={tool.id} className="space-y-6">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="text-2xl">{tool.icon}</span>
-                        <h2 className="text-lg font-semibold">{tool.name}</h2>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleDeleteTool(tool.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                        >
-                          <Copy className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
+            <div className="p-6 space-y-6">
+              {/* Tool Header */}
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-2">
+                  {tools.find(t => t.id === selectedTool)?.icon && (
+                    <span className="text-xl">{tools.find(t => t.id === selectedTool)?.icon}</span>
+                  )}
+                  <h3 className="text-lg font-semibold">
+                    {tools.find(t => t.id === selectedTool)?.name || 'New Tool'}
+                  </h3>
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="ghost" size="icon">
+                    <Copy className="h-4 w-4" />
+                  </Button>
+                  <Button variant="ghost" size="icon">
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
 
-                    <div className="space-y-4">
-                      <div>
-                        <FormLabel>Approval mode</FormLabel>
-                        <FormDescription>
-                          Decide whether or not user approval is required to run
-                        </FormDescription>
-                        <Select
-                          value={tool.approvalMode}
-                          onValueChange={(value) => updateToolConfig(tool.id, 'approvalMode', value)}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="required">Approval required</SelectItem>
-                            <SelectItem value="optional">Optional</SelectItem>
-                            <SelectItem value="none">No approval needed</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
+              {/* Tool Configuration Form */}
+              <div className="space-y-6">
+                <FormField
+                  control={form.control}
+                  name={`tools.${tools.findIndex(t => t.id === selectedTool)}.approvalMode`}
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Approval mode</FormLabel>
+                      <FormDescription>
+                        Decide whether or not user approval is required to run
+                      </FormDescription>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="required">Approval required</SelectItem>
+                          <SelectItem value="optional">Approval optional</SelectItem>
+                          <SelectItem value="none">No approval needed</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </FormItem>
+                  )}
+                />
 
-                      <div>
-                        <FormLabel>Max approvals asked before auto-run</FormLabel>
-                        <FormDescription>
-                          Enter the number of times this tool will ask for approval within a task before running automatically.
-                        </FormDescription>
-                        <Input
-                          value={tool.maxApprovals === 'no-limit' ? '' : tool.maxApprovals}
-                          onChange={(e) => {
-                            const value = e.target.value === '' ? 'no-limit' : parseInt(e.target.value);
-                            updateToolConfig(tool.id, 'maxApprovals', value);
-                          }}
-                          placeholder="No limit"
+                <FormField
+                  control={form.control}
+                  name={`tools.${tools.findIndex(t => t.id === selectedTool)}.maxApprovals`}
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Max approvals asked before auto-run</FormLabel>
+                      <FormDescription>
+                        Enter the number of times this tool will ask for approval within a task before running automatically.
+                      </FormDescription>
+                      <FormControl>
+                        <Input 
+                          placeholder="No limit" 
+                          type="number"
+                          {...field}
+                          onChange={e => field.onChange(e.target.value === '' ? 'no-limit' : Number(e.target.value))}
                         />
-                      </div>
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
 
-                      <div>
-                        <FormLabel>Prompt for how to use</FormLabel>
-                        <FormDescription>
-                          Describe how your agent should use this tool.
-                        </FormDescription>
-                        <Textarea
-                          value={tool.prompt}
-                          onChange={(e) => updateToolConfig(tool.id, 'prompt', e.target.value)}
+                <FormField
+                  control={form.control}
+                  name={`tools.${tools.findIndex(t => t.id === selectedTool)}.prompt`}
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Prompt for how to use</FormLabel>
+                      <FormDescription>
+                        Describe how your agent should use this tool.
+                      </FormDescription>
+                      <FormControl>
+                        <Textarea 
+                          placeholder="Defaults to: Completes a Google search for a query and returns the results."
                           className="min-h-[100px]"
+                          {...field}
                         />
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+              </div>
             </div>
           ) : (
-            <div className="text-center text-muted-foreground p-4">
+            <div className="h-full flex items-center justify-center text-muted-foreground">
               Select a tool to configure or add a new one
             </div>
           )}

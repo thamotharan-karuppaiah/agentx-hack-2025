@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
+const { Schema } = mongoose;
 
-const actionSchema = new mongoose.Schema({
+const actionSchema = new Schema({
   title: {
     type: String,
     required: true
@@ -8,7 +9,7 @@ const actionSchema = new mongoose.Schema({
   description: String
 }, { _id: true });
 
-const agentSchema = new mongoose.Schema({
+const agentSchema = new Schema({
   name: {
     type: String,
     required: true
@@ -17,7 +18,31 @@ const agentSchema = new mongoose.Schema({
   emoji: String,
   systemPrompt: String,
   tools: [{
-    type: String
+    id: {
+      type: String,
+      required: true
+    },
+    name: {
+      type: String,
+      required: false
+    },
+    icon: {
+      type: String,
+      required: false
+    },
+    approvalMode: {
+      type: String,
+      enum: ['required', 'none', 'optional'],
+      default: 'required'
+    },
+    maxApprovals: {
+      type: Schema.Types.Mixed, // To support both number and 'no-limit' string
+      default: 'no-limit'
+    },
+    prompt: {
+      type: String,
+      required: false
+    }
   }],
   actions: [actionSchema],
   lastRunDate: Date,

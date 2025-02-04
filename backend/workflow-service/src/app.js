@@ -6,6 +6,7 @@ const swaggerUi = require('swagger-ui-express');
 const { redisClient } = require('./config/redis');
 const workflowRoutes = require('./routes/workflow.routes');
 const templateRoutes = require('./routes/template.routes');
+const agentRoutes = require('./routes/agent.routes');
 
 const app = express();
 const PORT = process.env.PORT || 8096;
@@ -43,6 +44,7 @@ app.use('/workflow-service/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDo
 // Routes
 app.use('/workflow-service/v1', workflowRoutes);
 app.use('/workflow-service/v1', templateRoutes);
+app.use('/workflow-service/v1', agentRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

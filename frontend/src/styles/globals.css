@@ -1,0 +1,47 @@
+@layer base {
+  .prose {
+    @apply max-w-none;
+  }
+  
+  .prose p {
+    @apply mb-3;
+  }
+  
+  .prose blockquote {
+    @apply border-l-4 border-gray-300 pl-4 italic;
+  }
+  
+  .prose ul {
+    @apply list-disc pl-6 mb-3;
+  }
+  
+  .prose ol {
+    @apply list-decimal pl-6 mb-3;
+  }
+  
+  .prose strong {
+    @apply font-bold;
+  }
+  
+  .prose em {
+    @apply italic;
+  }
+  
+  /* Tool tag styling */
+  .prose span[data-type="tool"] {
+    @apply bg-primary/10 text-primary rounded px-1.5 py-0.5 font-mono text-sm;
+    white-space: nowrap;
+  }
+  
+  .ProseMirror {
+    @apply outline-none min-h-[400px];
+  }
+  
+  .ProseMirror p.is-editor-empty:first-child::before {
+    @apply text-muted-foreground;
+    content: "Start typing or press '/' to insert a tool...";
+    float: left;
+    height: 0;
+    pointer-events: none;
+  }
+} 

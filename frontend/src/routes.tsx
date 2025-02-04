@@ -1,5 +1,4 @@
 import { BrowserRouter as Router, Route, Routes, Navigate, Outlet } from "react-router-dom";
-import { AuthProvider } from "@/context/AuthContext";
 import WorkspaceMainLayout from "./components/Layout/WorkspaceMainLayout";
 import HomeRedirect from "@/components/Auth/HomeRedirect";
 import NotFound from "@/components/Error/NotFound";
@@ -12,6 +11,7 @@ import WorkflowAnalytics from "@/features/Workflow/WorkflowDetails/WorkflowAnaly
 import WorkflowIntegrate from "@/features/Workflow/WorkflowDetails/WorkflowIntegrate";
 import { WorkflowEdit } from "./features/Workflow/WorkflowEdit";
 import AgentHome from "./features/Agents/AgentHome";
+import AgentDetails from "./features/Agents/AgentDetails";
 
 const AppRoutes = () => (
   <Router>
@@ -34,10 +34,11 @@ const AppRoutes = () => (
             <Route path="integrate" element={<WorkflowIntegrate />} />
           </Route>
           <Route path="agents" element={<AgentHome />} />
-          <Route path="*" element={<Navigate to="/404" replace />} />
+          <Route path="agents/:agentId" element={<AgentDetails />} />
+          {/* <Route path="*" element={<Navigate to="/404" replace />} /> */}
         </Route>
-        <Route path="/404" element={<NotFound />} />
-        <Route path="*" element={<Navigate to="/404" replace />} />
+        {/* <Route path="/404" element={<NotFound />} />
+        <Route path="*" element={<Navigate to="/404" replace />} /> */}
       </Route>
     </Routes>
   </Router>

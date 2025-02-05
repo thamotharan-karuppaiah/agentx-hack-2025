@@ -21,7 +21,20 @@ class WorkflowState(BaseModel):
     execution_log: List = []
     node_inputs: Dict[str, Any] = {}  # Store inputs for each node
     node_outputs: Dict[str, Any] = {}  # Store outputs for each node
-    step1_input: dict = {}
+
+    class Config:
+        arbitrary_types_allowed = True
+
+    def model_dump(self) -> dict:
+        return {
+            "workflow_id": self.workflow_id,
+            "current_node": self.current_node,
+            "output": self.output,
+            "error": self.error,
+            "execution_log": self.execution_log,
+            "node_inputs": self.node_inputs,
+            "node_outputs": self.node_outputs
+        }
 
 class WorkflowOrchestrator:
     def __init__(self):
@@ -38,6 +51,7 @@ class WorkflowOrchestrator:
         self.checkpoint = PostgresSaver(self.conn)
         self.checkpoint.setup()
         self.nodes: Dict[str, Any] = {}
+        self.graph = None
 
     async def __aenter__(self):
         return self
@@ -49,152 +63,251 @@ class WorkflowOrchestrator:
     def create_node(self, node_config: Dict[str, Any]):
         """Create a node based on its type"""
         node_type = node_config.get("type")
-        node_data = node_config.get("data", {})
         node_id = node_config.get("id")
         
-        async def node_wrapper(state):
-            try:
-                # Get node-specific inputs from state
-                node_inputs = state.get("node_inputs", {}).get(node_id, {})
-                # Initialize node outputs if not present
-                if "node_outputs" not in state:
-                    state["node_outputs"] = {}
+        if node_type == "start":
+            return self._create_start_node(node_config)
+        elif node_type == "end":
+            return self._create_end_node(node_config)
+        elif node_type == "llm":
+            return LLMNode(node_config)
+        elif node_type == "api":
+            return APINode(node_config)
+        elif node_type == "code":
+            return CodeNode(node_config)
+        elif node_type == "human":
+            human_node = HumanNode(node_config)
+            self.nodes["human"] = human_node
+            return human_node
+        else:
+            raise ValueError(f"Unknown node type: {node_type}")
+
+    def _create_start_node(self, node_config: Dict[str, Any]):
+        """Create a start node"""
+        node_data = node_config.get("data", {})
+        node_id = node_config.get("name", "start")
+
+        class StartNode:
+            def __init__(self, node_id: str, node_data: Dict[str, Any]):
+                self.node_id = node_id
+                self.node_name = node_id  # Using node_id as name since it's already using the name
+                self.node_data = node_data
+
+            async def process(self, state: Dict[str, Any]) -> Dict[str, Any]:
+                input_data = {}
                 
-                if node_type == "start":
-                    input_data = {}
-                    for group in node_data.get("groups", []):
+                # First try to get values from node_inputs
+                if state.get("node_inputs"):
+                    input_data.update(state["node_inputs"])
+                
+                # If we still don't have values, try to get them from the state directly
+                if not any(input_data.values()):
+                    for group in self.node_data.get("groups", []):
                         for field in group.get("fields", []):
-                            input_data[field["variableName"]] = state.get(field["variableName"], "")
-                    state["node_outputs"][node_id] = input_data
-                    return {"input": input_data, "node_output": input_data, "node_outputs": state["node_outputs"]}
-
-                elif node_type == "end":
-                    state["node_outputs"][node_id] = state
-                    return {"output": state, "node_output": state, "node_outputs": state["node_outputs"]}
-
-                elif node_type == "llm":
-                    llm_node = LLMNode(node_config, settings.OPENAI_API_KEY)
-                    result = await llm_node.process({**state, "inputs": node_inputs})
-                    state["node_outputs"][node_id] = result
-                    return {"node_output": result, "node_outputs": state["node_outputs"]}
-
-                elif node_type == "api":
-                    api_node = APINode(node_config)
-                    result = await api_node.process({**state, "inputs": node_inputs})
-                    state["node_outputs"][node_id] = result
-                    return {"node_output": result, "node_outputs": state["node_outputs"]}
-
-                elif node_type == "code":
-                    code_node = CodeNode(node_config)
-                    result = await code_node.process({**state, "inputs": node_inputs})
-                    state["node_outputs"][node_id] = result
-                    return {"node_output": result, "node_outputs": state["node_outputs"]}
-
-                elif node_type == "human":
-                    human_node = HumanNode(node_config)
-                    self.nodes["human"] = human_node
-                    result = await human_node.process({**state, "inputs": node_inputs})
-                    state["node_outputs"][node_id] = result
-                    return {"node_output": result, "node_outputs": state["node_outputs"]}
-
-            except Exception as e:
+                            var_name = field["variableName"]
+                            if var_name in state:
+                                input_data[var_name] = state[var_name]
+                
+                # Update the state's node_inputs with our input data
+                if "node_inputs" not in state:
+                    state["node_inputs"] = {}
+                state["node_inputs"].update(input_data)
+                
                 return {
-                    "error": str(e),
-                    "node_id": node_config.get("id"),
-                    "node_type": node_type
+                    f"{self.node_name}.input": input_data,
+                    f"{self.node_name}.output": input_data,
+                    "node_output": input_data  # Add this to make sure output is captured
                 }
 
-        return node_wrapper
+        return StartNode(node_id, node_data)
 
-    def build_graph(self, workflow_config: Dict[str, Any]) -> StateGraph:
-        """Build a LangGraph workflow from config"""
+    def _create_end_node(self, node_config: Dict[str, Any]):
+        """Create an end node"""
+        node_id = node_config.get("name", "end")
+
+        class EndNode:
+            def __init__(self, node_id: str):
+                self.node_id = node_id
+                self.node_name = node_id  # Using node_id as name since it's already using the name
+
+            async def process(self, state: Dict[str, Any]) -> Dict[str, Any]:
+                # Get all inputs and outputs
+                node_outputs = state.get("node_outputs", {})
+                node_inputs = state.get("node_inputs", {})
+                
+                # Start with all inputs
+                final_output = {}
+                final_output.update(node_inputs)
+                
+                # Add outputs from all previous nodes
+                for node_name, output in node_outputs.items():
+                    if node_name.lower() != "end":
+                        if isinstance(output, dict):
+                            # Handle different output formats
+                            if f"{node_name}.output" in output:
+                                final_output.update(output[f"{node_name}.output"])
+                            elif "node_output" in output:
+                                final_output.update(output["node_output"])
+                            else:
+                                final_output.update(output)
+                
+                return {
+                    f"{self.node_name}.output": final_output,
+                    "final_state": final_output
+                }
+
+        return EndNode(node_id)
+
+    async def create_workflow_graph(self, workflow_config: Dict[str, Any]) -> StateGraph:
+        """Create a LangGraph workflow from config"""
         # Initialize StateGraph with WorkflowState schema
         graph = StateGraph(WorkflowState)
         
+        # Create a mapping of node IDs to names
+        node_id_to_name = {
+            node_config["id"]: node_config.get("name", node_config["id"])
+            for node_config in workflow_config["nodes"]
+        }
+        
         # Add nodes
-        for node in workflow_config["nodes"]:
-            node_instance = self.create_node(node)
-            self.nodes[node["id"]] = {
-                "config": node,
-                "instance": node_instance
-            }
-            graph.add_node(node["id"], node_instance)
+        for node_config in workflow_config["nodes"]:
+            node_id = node_config["id"]
+            node_name = node_config.get("name", node_id)  # Get node name, fallback to id if not present
+            node_instance = self.create_node(node_config)
+            
+            # Create the node function that will be called by the graph
+            async def create_node_fn(node, node_name):
+                async def node_fn(state: WorkflowState):
+                    try:
+                        # Convert WorkflowState to dict for node processing
+                        state_dict = state.model_dump()
+                        
+                        # Process the node with its process method
+                        result = await node.process(state_dict)
+                        
+                        # Update node outputs in state
+                        if "node_outputs" not in state_dict:
+                            state_dict["node_outputs"] = {}
+                        state_dict["node_outputs"][node_name] = result
+                        
+                        # Update the WorkflowState
+                        state.node_outputs = state_dict["node_outputs"]
+                        
+                        # Store the output in the state's output field
+                        if hasattr(node, 'node_name'):
+                            if node.node_name.lower() == 'end':
+                                # For end node, use the final state as output
+                                state.output = result.get('final_state', {})
+                            else:
+                                # For other nodes, store their actual output
+                                node_output = result.get(f"{node.node_name}.output", result.get("node_output", result))
+                                if isinstance(node_output, dict):
+                                    state.output.update(node_output)
+                        
+                        return state
+                    except Exception as e:
+                        # Use node name in error messages
+                        state.error = f"Error in {node_name}: {str(e)}"
+                        return state
+                return node_fn
+            
+            # Add the node to the graph with its process method using node name
+            graph.add_node(node_name, await create_node_fn(node_instance, node_name))
+            self.nodes[node_name] = node_instance
 
-        # Add edges with START and END
-        # First, connect START to the start node
-        start_node = next(node["id"] for node in workflow_config["nodes"] if node["type"] == "start")
-        graph.add_edge(START, start_node)
+        # Find the start node and connect it
+        try:
+            start_node = next(node_config.get("name", node_config["id"]) 
+                            for node_config in workflow_config["nodes"] 
+                            if node_config["type"].lower() == "start")
+            # Connect the START constant to the first node
+            graph.add_edge(START, start_node)
+        except StopIteration:
+            raise ValueError("Workflow must contain exactly one node of type 'start'")
 
-        # Add other edges
+        # Add remaining edges using node names
         for edge in workflow_config["edges"]:
             source = edge["source"]
             target = edge["target"]
             
-            if target == "end":
-                graph.add_edge(source, END)
+            # Convert IDs to names if they exist in our mapping
+            source_name = node_id_to_name.get(source, source)
+            target_name = node_id_to_name.get(target, target)
+            
+            # Handle end node
+            if target_name.lower() == "end":
+                graph.add_edge(source_name, END)
             else:
-                graph.add_edge(source, target)
+                graph.add_edge(source_name, target_name)
 
-        return graph.compile()
+        self.graph = graph.compile()
+        return self.graph
 
-    async def execute_workflow(self, workflow_id: int, workflow_config: Dict[str, Any], initial_inputs: Dict[str, Any] = None):
-        """Execute a workflow with optional initial inputs"""
-        graph = self.build_graph(workflow_config)
-
-        print(graph)
-
-        # try:
-        #     # Get the graph visualization
-        #     graph_viz = graph.get_graph()
-        #     # Convert to Mermaid format with proper configuration
-        #     mermaid_graph = graph_viz.to_mermaid(
-        #         direction="LR",  # Left to right layout
-        #         theme="default",
-        #         width=800,
-        #         height=600
-        #     )
-        #     display(Image(mermaid_graph))
-        # except Exception as e:
-        #     print(f"Note: Could not generate workflow visualization: {str(e)}")
-        #     print("Mermaid graph definition:")
-        #     print(mermaid_graph)  # Print the Mermaid definition for debugging
-
-        print("\nWorkflow Graph Structure:")
-        print("------------------------")
-        print("Nodes:", [node for node in workflow_config["nodes"]])
-        print("Edges:", [edge for edge in workflow_config["edges"]])
-        
-        # Process initial inputs for nodes if provided
-        node_inputs = {}
-        if initial_inputs:
-            for node_id, inputs in initial_inputs.items():
-                node_inputs[node_id] = inputs
-        
+    async def initialize_workflow_state(self, workflow_id: int, initial_inputs: Dict[str, Any] = None) -> WorkflowState:
+        """Initialize the workflow state with the given inputs"""
         # Create initial state using the WorkflowState model
         initial_state = WorkflowState(
             workflow_id=str(workflow_id),
             current_node=None,
-            output={},
+            output=initial_inputs if initial_inputs else {},
             error=None,
             execution_log=[],
-            node_inputs=node_inputs,
-            node_outputs={},  # Initialize empty node outputs
-            **(initial_inputs if initial_inputs else {})
-        ).model_dump()
+            node_inputs=initial_inputs if initial_inputs else {},
+            node_outputs={},
+        )
         
-        config = {
-            "configurable": {
-                "workflow_id": str(workflow_id)
-            }
-        }
-        
-        execution_states = []
+        return initial_state
+
+    async def execute_workflow(self, workflow_id: int, workflow_config: Dict[str, Any], initial_inputs: Dict[str, Any] = None):
+        """Execute a workflow with optional initial inputs"""
         try:
-            async for state in graph.astream(initial_state, config=config):
-                execution_states.append(state)
-                if state.get("error"):
-                    break
+            # Step 1: Create the workflow graph if not already created
+            if not self.graph:
+                self.graph = await self.create_workflow_graph(workflow_config)
+
+            print("\nCompiled Graph Structure:")
+            print("------------------------")
+            for node_name, node_spec in self.graph.nodes.items():
+                print(f"Node: {node_name}")
+                print(f"  Type: {type(node_spec).__name__}")
+                print("------------------------")
+
+            # Print the edges
+            print("Edges:")
+            for source, target in self.graph.builder._all_edges:
+                print(f"  {source} -> {target}")
+            print("------------------------")
+
+            try:
+                # Get the graph visualization
+                display(Image(self.graph.get_graph(xray=1).draw_mermaid_png()))
+            except Exception as e:
+                print(f"Note: Could not generate workflow visualization: {str(e)}")
+
+            print("\nWorkflow Graph Structure:")
+            print("------------------------")
+            print("Nodes:", [node for node in workflow_config["nodes"]])
+            print("Edges:", [edge for edge in workflow_config["edges"]])
             
+            # Step 2: Initialize the workflow state
+            initial_state = await self.initialize_workflow_state(workflow_id, initial_inputs)
+            
+            print("\nInitial State:")
+            print(initial_state)
+            
+            config = {
+                "configurable": {
+                    "workflow_id": str(workflow_id)
+                }
+            }
+            
+            # Step 3: Execute the workflow
+            execution_states = []
+            result = await self.graph.ainvoke(initial_state, config=config)
+
+
+            print("\nResult:")
+            print(result)
             return execution_states
                 
         except Exception as e:

@@ -4,7 +4,8 @@ from ...schemas import HumanNodeData
 
 class HumanNode:
     def __init__(self, config: Dict[str, Any]):
-        self.node_id = config.get("id", "human")
+        self.node_id = config.get("name", config.get("id", "human"))
+        self.node_name = self.node_id
         self.config = HumanNodeData(**config.get("data", {}))
         self.state = None
         self.completed = False
@@ -56,19 +57,19 @@ class HumanNode:
             
             # Return state with human input and node-specific keys
             return {
-                f"{self.node_id}.input": self.state.get("human_input"),
-                f"{self.node_id}.output": self.state.get("output"),
-                f"{self.node_id}.prompt": prompt
+                f"{self.node_name}.input": self.state.get("human_input"),
+                f"{self.node_name}.output": self.state.get("output"),
+                f"{self.node_name}.prompt": prompt
             }
             
         except Exception as e:
             error_msg = f"Error in human node: {str(e)}"
             if self.config.errorBehavior == "continue":
                 return {
-                    f"{self.node_id}.error": error_msg,
-                    f"{self.node_id}.input": None,
-                    f"{self.node_id}.output": None,
-                    f"{self.node_id}.prompt": self.config.prompt if hasattr(self, 'config') else None
+                    f"{self.node_name}.error": error_msg,
+                    f"{self.node_name}.input": None,
+                    f"{self.node_name}.output": None,
+                    f"{self.node_name}.prompt": self.config.prompt if hasattr(self, 'config') else None
                 }
             raise Exception(error_msg)
     

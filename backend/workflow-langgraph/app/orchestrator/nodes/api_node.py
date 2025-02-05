@@ -4,7 +4,8 @@ from ...schemas import APINodeData
 
 class APINode:
     def __init__(self, config: Dict[str, Any]):
-        self.node_id = config.get("id", "api")
+        self.node_id = config.get("name", config.get("id", "api"))
+        self.node_name = self.node_id
         self.config = APINodeData(**config.get("data", {}))
 
     def _replace_placeholders(self, text: str, node_outputs: Dict[str, Any], node_inputs: Dict[str, Any]) -> str:
@@ -53,20 +54,20 @@ class APINode:
                 ) as response:
                     response_data = await response.json()
                     return {
-                        f"{self.node_id}.status": response.status,
-                        f"{self.node_id}.data": response_data,
-                        f"{self.node_id}.url": url,
-                        f"{self.node_id}.method": self.config.method.upper()
+                        f"{self.node_name}.status": response.status,
+                        f"{self.node_name}.data": response_data,
+                        f"{self.node_name}.url": url,
+                        f"{self.node_name}.method": self.config.method.upper()
                     }
 
         except Exception as e:
             error_msg = f"Error in API call: {str(e)}"
             if self.config.errorBehavior == "continue":
                 return {
-                    f"{self.node_id}.error": error_msg,
-                    f"{self.node_id}.data": None,
-                    f"{self.node_id}.status": None,
-                    f"{self.node_id}.url": url if 'url' in locals() else self.config.url,
-                    f"{self.node_id}.method": self.config.method.upper()
+                    f"{self.node_name}.error": error_msg,
+                    f"{self.node_name}.data": None,
+                    f"{self.node_name}.status": None,
+                    f"{self.node_name}.url": url if 'url' in locals() else self.config.url,
+                    f"{self.node_name}.method": self.config.method.upper()
                 }
             raise Exception(error_msg) 

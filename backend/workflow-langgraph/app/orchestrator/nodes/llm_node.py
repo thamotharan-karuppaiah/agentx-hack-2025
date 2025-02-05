@@ -6,7 +6,8 @@ from langchain_core.messages import (
     FunctionMessage,
     BaseMessage
 )
-# from langchain_openai import ChatOpenAI
+from langchain_openai import ChatOpenAI
+from app.config import settings
 from cloudverse.cloudverse_openai import CloudverseChat
 from pydantic import BaseModel, Field
 from enum import Enum
@@ -24,25 +25,26 @@ class MessageConfig(BaseModel):
     function_name: Optional[str] = None
 
 class LLMNodeConfig(BaseModel):
-    model: str = Field(default="gpt-3.5-turbo")
+    model: str = "Azure-GPT-4o"
     temperature: float = Field(default=0.7)
     system_message: Optional[str] = None
     prompt_template: Optional[str] = None
     output_key: str = Field(default="output")
     input_key: str = Field(default="input")
-    max_tokens: Optional[int] = None
+    max_tokens: Optional[int] = Field(default=500)
     streaming: bool = Field(default=False)
 
 class LLMNode:
-    def __init__(self, config: Dict[str, Any], api_key: str):
-        self.node_id = config.get("id", "llm")
+    def __init__(self, config: Dict[str, Any]):
+        self.node_id = config.get("name", config.get("id", "llm"))
+        self.node_name = self.node_id
         self.config = LLMNodeConfig(**config.get("config", {}))
         # self.llm = ChatOpenAI(
         #     model=self.config.model,
         #     temperature=self.config.temperature,
         #     max_tokens=self.config.max_tokens,
         #     streaming=self.config.streaming,
-        #     api_key=api_key
+        #     api_key=settings.OPENAI_API_KEY
         # )
         PROXY_URL = 'https://cloudverse.freshworkscorp.com'
         PROXY_TOKEN = 'eyJhbGciOiJIUzI1NiJ9.eyJ1c2VyIjp7Im5hbWUiOiJSYW1yYXRhbiBKYXZhIiwiZW1haWwiOiJyYW1yYXRhbi5qYXZhQGZyZXNod29ya3MuY29tIiwiaW1hZ2UiOiJodHRwczovL2xoMy5nb29nbGV1c2VyY29udGVudC5jb20vYS9BQ2c4b2NJSGNkaFNnTTFFTW1obDAweXdwMmpjaWEtQ0pzQkQwTUE4NzhsZG1BYmN3YWswSnc9czk2LWMiLCJpZCI6IjY3YTIwY2EzMGUyNThhNjc4OTU4YmJmMSJ9LCJleHBpcmVzIjoiMjAyNS0wMi0wNFQxNDo1MzoxMS4wMDlaIiwianRpIjoiR1E1dGhiTExxZU9DbGpLNVMwU0ZUIiwiaWF0IjoxNzM4NjczNTk2LCJleHAiOjE3MzkyNzgzOTZ9.Vxd9MVeKbTsTg7DhJ5g39-65PCXslAd6RAi4TZTyeHw'
@@ -94,7 +96,7 @@ class LLMNode:
             node_outputs = state.get("node_outputs", {})
             
             # Get input using node-specific input key
-            input_key = f"{self.node_id}.{self.config.input_key}"
+            input_key = f"{self.node_name}.{self.config.input_key}"
             input_text = node_inputs.get(input_key, state.get(self.config.input_key, ""))
             
             # Format the input using template if provided
@@ -112,8 +114,8 @@ class LLMNode:
             
             # Prepare output with node-specific output key
             output = {
-                f"{self.node_id}.{self.config.output_key}": response.content,
-                f"{self.node_id}.message_history": [msg.content for msg in self.message_history]
+                f"{self.node_name}.{self.config.output_key}": response.content,
+                f"{self.node_name}.message_history": [msg.content for msg in self.message_history]
             }
             
             return output
@@ -122,8 +124,8 @@ class LLMNode:
             # Handle errors and add to state
             error_msg = f"Error in LLM processing: {str(e)}"
             return {
-                f"{self.node_id}.error": error_msg,
-                f"{self.node_id}.{self.config.output_key}": None
+                f"{self.node_name}.error": error_msg,
+                f"{self.node_name}.{self.config.output_key}": None
             }
 
     async def add_message(self, message_config: MessageConfig) -> None:

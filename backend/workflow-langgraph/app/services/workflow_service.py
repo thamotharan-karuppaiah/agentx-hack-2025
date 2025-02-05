@@ -30,102 +30,13 @@ class WorkflowService:
     def __init__(self, db: Session):
         self.db = db
 
-    def build_workflow_graph(self, workflow_config: schemas.WorkflowConfig) -> StateGraph:
-        """Build a StateGraph from workflow configuration"""
-        workflow = StateGraph(WorkflowState)
-        
-        # First check for start node
-        try:
-            start_node = next(node.id for node in workflow_config.nodes if node.type == "start")
-        except StopIteration:
-            raise ValueError("No start node found in workflow configuration")
-        
-        # Add nodes with type-specific functions
-        for node in workflow_config.nodes:
-            if node.type == "start":
-                def node_function(state: WorkflowState):
-                    state["current_node"] = node.id
-                    state["output"][node.id] = {"type": "start", "status": "executed"}
-                    return state
-            
-            elif node.type == "code":
-                def node_function(state: WorkflowState):
-                    state["current_node"] = node.id
-                    result = self.code_handler.execute(state, node.data.code)
-                    state["output"][node.id] = {
-                        "type": "code",
-                        "result": result,
-                        "status": "executed"
-                    }
-                    return state
-            
-            elif node.type == "llm":
-                def node_function(state: WorkflowState):
-                    state["current_node"] = node.id
-                    result = self.llm_handler.execute(state, node.data.prompt)
-                    state["output"][node.id] = {
-                        "type": "llm",
-                        "result": result,
-                        "status": "executed"
-                    }
-                    return state
-            
-            elif node.type == "api":
-                def node_function(state: WorkflowState):
-                    state["current_node"] = node.id
-                    result = self.api_handler.execute(state, node.data.endpoint)
-                    state["output"][node.id] = {
-                        "type": "api",
-                        "result": result,
-                        "status": "executed"
-                    }
-                    return state
-            
-            elif node.type == "end":
-                def node_function(state: WorkflowState):
-                    state["current_node"] = node.id
-                    state["output"][node.id] = {"type": "end", "status": "executed"}
-                    return state
-            
-            workflow.add_node(node.id, node_function)
-
-        # Add edges
-        for edge in workflow_config.edges:
-            workflow.add_edge(edge.source, edge.target)
-
-        # Connect end node to END state
-        end_node = next(node.id for node in workflow_config.nodes if node.type == "end")
-        workflow.add_edge(end_node, END)
-
-        # Set entry point
-        workflow.set_entry_point(start_node)
-
-        # Print detailed graph structure
-        print("\nDetailed Workflow Graph Structure:")
-        print("--------------------------------")
-        print("Nodes:")
-        for node_id, node_func in workflow.nodes.items():
-            node_type = next((n.type for n in workflow_config.nodes if n.id == node_id), "system")
-            print(f"  {node_id}:")
-            print(f"    Type: {node_type}")
-            print(f"    Function: {node_func}")
-        
-        print("\nEdges:")
-        for edge in workflow.edges:
-            print(f"  {edge[0]} -> {edge[1]}")
-        
-        print(f"\nEntry Point: {workflow.entry_point}")
-        print("--------------------------------\n")
-        # Setting xray to 1 will show the internal structure of the nested graph
-        return workflow.compile()
-
-    async def create_workflow(self, workflow: schemas.Workflow) -> models.WorkflowExecution:
-        """Create and execute a new workflow"""
+    async def create_workflow(self, workflow: schemas.Workflow, initial_inputs: Dict[str, Any] = None) -> models.WorkflowExecution:
+        """Create a new workflow execution record and prepare the workflow"""
         try:
             # Create workflow execution record
             workflow_execution = models.WorkflowExecution(
                 apps_execution_id=str(workflow.id),
-                status="RUNNING",
+                status="CREATED",
                 raw_execution_json=workflow.model_dump(),
                 created_at=datetime.utcnow(),
                 updated_at=datetime.utcnow()
@@ -135,18 +46,43 @@ class WorkflowService:
             # self.db.commit()
             # self.db.refresh(workflow_execution)
 
-            # Execute workflow using orchestrator
-            async with WorkflowOrchestrator() as orchestrator:
-                # Fix: Access dictionary key with ['type'] instead of .type
-                start_node = next((node for node in workflow.config.nodes if node['type'] == "start"), None)
-                initial_inputs = {}
-                if start_node:
-                    for group in start_node['data']['groups']:
-                        for field in group['fields']:
-                            initial_inputs[field['variableName']] = ""
+            return workflow_execution
 
-                # Execute workflow
-                execution_states = await orchestrator.execute_workflow(
+        except Exception as e:
+            print(f"Error in create_workflow: {str(e)}")
+            raise
+
+    async def execute_workflow(self, workflow_execution: models.WorkflowExecution, workflow: schemas.Workflow, initial_inputs: Dict[str, Any] = None) -> models.WorkflowExecution:
+        """Execute a prepared workflow"""
+        try:
+            workflow_execution.status = "RUNNING"
+            workflow_execution.updated_at = datetime.utcnow()
+
+            async with WorkflowOrchestrator() as orchestrator:
+                # Step 1: Create the workflow graph
+                graph = await orchestrator.create_workflow_graph(workflow.config.dict())
+
+                # Initialize inputs if not provided
+                if initial_inputs is None:
+                    initial_inputs = {}
+                    # Only set empty values if no initial inputs were provided
+                    start_node = next((node for node in workflow.config.nodes if node['type'] == "start"), None)
+                    if start_node:
+                        for group in start_node['data']['groups']:
+                            for field in group['fields']:
+                                initial_inputs[field['variableName']] = ""
+
+                # Step 2: Initialize workflow state
+                initial_state = await orchestrator.initialize_workflow_state(
+                    workflow_execution.id,
+                    initial_inputs
+                )
+
+                print("\nInitial Inputs being passed to workflow:")
+                print(initial_inputs)
+
+                # Step 3: Execute the workflow
+                result = await orchestrator.execute_workflow(
                     workflow_execution.id,
                     workflow.config.dict(),
                     initial_inputs
@@ -156,24 +92,19 @@ class WorkflowService:
                 workflow_execution.status = "COMPLETED"
                 workflow_execution.raw_execution_json = {
                     "config": workflow.config.dict(),
-                    "execution_states": execution_states
+                    "result": result.model_dump() if hasattr(result, 'model_dump') else result
                 }
 
-                if any(state.get("error") for state in execution_states):
+                if hasattr(result, 'error') and result.error:
                     workflow_execution.status = "ERROR"
-                    workflow_execution.error_message = next(
-                        state["error"] for state in execution_states if state.get("error")
-                    )
+                    workflow_execution.error_message = result.error
 
-                # self.db.commit()
                 return workflow_execution
 
         except Exception as e:
-            if workflow_execution:
-                workflow_execution.status = "ERROR"
-                workflow_execution.error_message = str(e)
-                self.db.commit()
-            print(f"Error in create_workflow: {str(e)}")
+            print(f"Error in execute_workflow: {str(e)}")
+            workflow_execution.status = "ERROR"
+            workflow_execution.error_message = str(e)
             raise
 
     async def get_workflow_logs(self, apps_execution_id: int) -> schemas.WorkflowResponse:

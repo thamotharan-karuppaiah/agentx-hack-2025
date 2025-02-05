@@ -9,12 +9,12 @@ router = APIRouter()
 
 @router.post("/workflows", response_model=schemas.WorkflowExecutionInDB)
 async def create_workflow(
-    workflow_config: schemas.WorkflowConfig,
+    workflow: schemas.Workflow,
     db: Session = Depends(get_db)
 ):
     """Create and start a new workflow execution"""
     workflow_service = WorkflowService(db)
-    return await workflow_service.create_workflow(workflow_config)
+    return await workflow_service.create_workflow(workflow)
 
 @router.get("/workflows/{apps_execution_id}/logs", response_model=schemas.WorkflowResponse)
 async def get_workflow_logs(

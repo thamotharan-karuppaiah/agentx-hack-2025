@@ -2,10 +2,12 @@ from typing import Any, List, Optional, TypedDict, Dict, Callable
 from langchain.schema import BaseMessage, ChatResult, AIMessage, HumanMessage, SystemMessage, ChatGeneration, \
     FunctionMessage
 from langchain_core.language_models import BaseChatModel
+from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from pydantic import Field, model_validator
 from enum import Enum
 import json
 import requests
+from dataclasses import dataclass
 
 
 class MessageRole(str, Enum):
@@ -150,6 +152,15 @@ class CloudverseChat(BaseChatModel):
             response.raise_for_status()
             response_data = response.json()
 
+            usage = response_data.get("usage", {})
+            metadata = dict([('prompt_tokens', usage.get("promptTokens", 0)),
+                             ('completion_token', usage.get("completionTokens", 0)),
+                             ('total_tokens', usage.get("totalTokens", 0)),
+                             ('tool_calls', response_data.get("toolCalls", [])),
+                             ('model', response_data.get("model", self.model_name)),
+                             ('finish_reason', response_data.get("finishReason", ""))]
+                            )
+
             # Check for tool calls in different possible formats
             tool_calls = response_data.get("toolCalls", [])
             if tool_calls:
@@ -163,21 +174,11 @@ class CloudverseChat(BaseChatModel):
 
                 if tool_results:
                     messages.extend(tool_results)
-                    return self._create_chat_result(tool_results[0].content)
+                    return self._create_chat_result(tool_results[0].content, metadata)
 
-            # Try different possible response keys
             response_message = response_data.get("text", "")
-            if not response_message:
-                response_message = response_data.get("content", "")
-            if not response_message:
-                response_message = response_data.get("message", "")
-            if not response_message:
-                response_message = response_data.get("response", "")
+            return self._create_chat_result(response_message, metadata)
 
-            if not response_message:
-                response_message = "No response received from the API"
-
-            return self._create_chat_result(response_message)
 
         except requests.RequestException as e:
             error_msg = f"Proxy request failed: {str(e)}"
@@ -188,6 +189,6 @@ class CloudverseChat(BaseChatModel):
         """Return identifier for the LLM type."""
         return "cloudverse"
 
-    def _create_chat_result(self, message: str) -> ChatResult:
+    def _create_chat_result(self, message: str, metadata: dict) -> ChatResult:
         message = AIMessage(content=message)
-        return ChatResult(generations=[ChatGeneration(message=message)])
+        return ChatResult(generations=[ChatGeneration(message=message)], llm_output=metadata)

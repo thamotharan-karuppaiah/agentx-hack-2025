@@ -20,3 +20,5 @@ pytest-asyncio
 pytest-mock
 networkx
 matplotlib
+ipython
+pygraphviz

@@ -19,6 +19,9 @@ class WorkflowState(BaseModel):
     output: dict = {}
     error: Optional[str] = None
     execution_log: List = []
+    node_inputs: Dict[str, Any] = {}  # Store inputs for each node
+    node_outputs: Dict[str, Any] = {}  # Store outputs for each node
+    step1_input: dict = {}
 
 class WorkflowOrchestrator:
     def __init__(self):
@@ -47,39 +50,52 @@ class WorkflowOrchestrator:
         """Create a node based on its type"""
         node_type = node_config.get("type")
         node_data = node_config.get("data", {})
+        node_id = node_config.get("id")
         
         async def node_wrapper(state):
             try:
+                # Get node-specific inputs from state
+                node_inputs = state.get("node_inputs", {}).get(node_id, {})
+                # Initialize node outputs if not present
+                if "node_outputs" not in state:
+                    state["node_outputs"] = {}
+                
                 if node_type == "start":
                     input_data = {}
                     for group in node_data.get("groups", []):
                         for field in group.get("fields", []):
                             input_data[field["variableName"]] = state.get(field["variableName"], "")
-                    return {"input": input_data, "node_output": input_data}
+                    state["node_outputs"][node_id] = input_data
+                    return {"input": input_data, "node_output": input_data, "node_outputs": state["node_outputs"]}
 
                 elif node_type == "end":
-                    return {"output": state, "node_output": state}
+                    state["node_outputs"][node_id] = state
+                    return {"output": state, "node_output": state, "node_outputs": state["node_outputs"]}
 
                 elif node_type == "llm":
                     llm_node = LLMNode(node_config, settings.OPENAI_API_KEY)
-                    result = await llm_node.process(state)
-                    return {"node_output": result}
+                    result = await llm_node.process({**state, "inputs": node_inputs})
+                    state["node_outputs"][node_id] = result
+                    return {"node_output": result, "node_outputs": state["node_outputs"]}
 
                 elif node_type == "api":
                     api_node = APINode(node_config)
-                    result = await api_node.process(state)
-                    return {"node_output": result}
+                    result = await api_node.process({**state, "inputs": node_inputs})
+                    state["node_outputs"][node_id] = result
+                    return {"node_output": result, "node_outputs": state["node_outputs"]}
 
                 elif node_type == "code":
                     code_node = CodeNode(node_config)
-                    result = await code_node.process(state)
-                    return {"node_output": result}
+                    result = await code_node.process({**state, "inputs": node_inputs})
+                    state["node_outputs"][node_id] = result
+                    return {"node_output": result, "node_outputs": state["node_outputs"]}
 
                 elif node_type == "human":
                     human_node = HumanNode(node_config)
                     self.nodes["human"] = human_node
-                    result = await human_node.process(state)
-                    return {"node_output": result}
+                    result = await human_node.process({**state, "inputs": node_inputs})
+                    state["node_outputs"][node_id] = result
+                    return {"node_output": result, "node_outputs": state["node_outputs"]}
 
             except Exception as e:
                 return {
@@ -125,20 +141,46 @@ class WorkflowOrchestrator:
         """Execute a workflow with optional initial inputs"""
         graph = self.build_graph(workflow_config)
 
+        print(graph)
+
+        # try:
+        #     # Get the graph visualization
+        #     graph_viz = graph.get_graph()
+        #     # Convert to Mermaid format with proper configuration
+        #     mermaid_graph = graph_viz.to_mermaid(
+        #         direction="LR",  # Left to right layout
+        #         theme="default",
+        #         width=800,
+        #         height=600
+        #     )
+        #     display(Image(mermaid_graph))
+        # except Exception as e:
+        #     print(f"Note: Could not generate workflow visualization: {str(e)}")
+        #     print("Mermaid graph definition:")
+        #     print(mermaid_graph)  # Print the Mermaid definition for debugging
+
         print("\nWorkflow Graph Structure:")
         print("------------------------")
         print("Nodes:", [node for node in workflow_config["nodes"]])
         print("Edges:", [edge for edge in workflow_config["edges"]])
         
+        # Process initial inputs for nodes if provided
+        node_inputs = {}
+        if initial_inputs:
+            for node_id, inputs in initial_inputs.items():
+                node_inputs[node_id] = inputs
+        
         # Create initial state using the WorkflowState model
         initial_state = WorkflowState(
-            workflow_id=str(workflow_id),  # Convert to string as required by schema
+            workflow_id=str(workflow_id),
             current_node=None,
             output={},
             error=None,
             execution_log=[],
-            **initial_inputs if initial_inputs else {}
-        ).model_dump()  # Convert to dict for graph execution
+            node_inputs=node_inputs,
+            node_outputs={},  # Initialize empty node outputs
+            **(initial_inputs if initial_inputs else {})
+        ).model_dump()
         
         config = {
             "configurable": {

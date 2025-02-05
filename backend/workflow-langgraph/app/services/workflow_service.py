@@ -117,8 +117,6 @@ class WorkflowService:
         print(f"\nEntry Point: {workflow.entry_point}")
         print("--------------------------------\n")
         # Setting xray to 1 will show the internal structure of the nested graph
-        display(Image(graph.get_graph(xray=1).draw_mermaid_png()))
-
         return workflow.compile()
 
     async def create_workflow(self, workflow: schemas.Workflow) -> models.WorkflowExecution:
@@ -167,7 +165,7 @@ class WorkflowService:
                         state["error"] for state in execution_states if state.get("error")
                     )
 
-                self.db.commit()
+                # self.db.commit()
                 return workflow_execution
 
         except Exception as e:

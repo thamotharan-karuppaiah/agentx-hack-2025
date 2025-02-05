@@ -34,6 +34,7 @@ class LLMNodeConfig(BaseModel):
 
 class LLMNode:
     def __init__(self, config: Dict[str, Any], api_key: str):
+        self.node_id = config.get("id", "llm")
         self.config = LLMNodeConfig(**config.get("config", {}))
         self.llm = ChatOpenAI(
             model=self.config.model,
@@ -61,20 +62,37 @@ class LLMNode:
             )
         raise ValueError(f"Unknown message type: {message_config.type}")
 
-    def _format_prompt(self, input_text: str) -> str:
-        """Format the prompt using the template if provided"""
+    def _format_prompt(self, input_text: str, node_outputs: Dict[str, Any]) -> str:
+        """Format the prompt using the template if provided and replace placeholders"""
         if self.config.prompt_template:
-            return self.config.prompt_template.format(input=input_text)
+            # Create a dictionary of available variables from previous node outputs
+            variables = {}
+            for node_id, outputs in node_outputs.items():
+                for key, value in outputs.items():
+                    placeholder = f"{node_id}.{key}"
+                    variables[placeholder] = value
+            
+            try:
+                # First try to format with node outputs
+                return self.config.prompt_template.format(input=input_text, **variables)
+            except KeyError:
+                # Fallback to basic formatting if placeholders not found
+                return self.config.prompt_template.format(input=input_text)
         return input_text
 
     async def process(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """Process the input state and return the output state"""
         try:
             # Get input from state
-            input_text = state.get(self.config.input_key, "")
+            node_inputs = state.get("inputs", {})
+            node_outputs = state.get("node_outputs", {})
+            
+            # Get input using node-specific input key
+            input_key = f"{self.node_id}.{self.config.input_key}"
+            input_text = node_inputs.get(input_key, state.get(self.config.input_key, ""))
             
             # Format the input using template if provided
-            formatted_input = self._format_prompt(input_text)
+            formatted_input = self._format_prompt(input_text, node_outputs)
             
             # Add input message to history
             input_message = HumanMessage(content=formatted_input)
@@ -86,15 +104,20 @@ class LLMNode:
             # Add response to history
             self.message_history.append(response)
             
-            # Update state with response
-            return {self.config.output_key: response.content}
+            # Prepare output with node-specific output key
+            output = {
+                f"{self.node_id}.{self.config.output_key}": response.content,
+                f"{self.node_id}.message_history": [msg.content for msg in self.message_history]
+            }
+            
+            return output
             
         except Exception as e:
             # Handle errors and add to state
             error_msg = f"Error in LLM processing: {str(e)}"
             return {
-                self.config.output_key: None,
-                "error": error_msg
+                f"{self.node_id}.error": error_msg,
+                f"{self.node_id}.{self.config.output_key}": None
             }
 
     async def add_message(self, message_config: MessageConfig) -> None:

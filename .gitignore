@@ -7,3 +7,5 @@ node_modules
 *.csh
 *.ps1
 /backend/workflow-langgraph/.venv
+/backend/workflow-langgraph/cloudverse/__pycache__
+/backend/workflow-langgraph/.idea

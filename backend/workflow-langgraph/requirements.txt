@@ -14,3 +14,9 @@ langgraph-checkpoint-postgres
 openai
 transformers
 psycopg2-binary
+pydantic-settings>=2.0.0
+pytest
+pytest-asyncio
+pytest-mock
+networkx
+matplotlib

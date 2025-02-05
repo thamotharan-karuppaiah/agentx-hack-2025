@@ -1,30 +1,176 @@
 from sqlalchemy.orm import Session
 from datetime import datetime
 from typing import Dict, Any, List
+from langgraph.graph import StateGraph, END
 from .. import models, schemas
-from ..orchestrator.workflow_orchestrator import WorkflowOrchestrator
+from IPython.display import Image, display
+class WorkflowState(dict):
+    """State object for the workflow"""
+    def __init__(self, workflow_config: Dict = None):
+        super().__init__()
+        config = workflow_config or {}
+        self.update({
+            "current_node": None,
+            "output": {},
+            "error": None,
+            "workflow": config
+        })
+
+    @classmethod
+    def create(cls, workflow: schemas.Workflow):
+        return cls({
+            "id": workflow.id,
+            "nodes": [node.model_dump() for node in workflow.config.nodes],
+            "edges": [edge.model_dump() for edge in workflow.config.edges]
+        })
 
 class WorkflowService:
     def __init__(self, db: Session):
         self.db = db
-        self.orchestrator = WorkflowOrchestrator()
 
-    async def create_workflow(self, workflow_config: schemas.WorkflowConfig) -> models.WorkflowExecution:
-        """Create and start a new workflow execution"""
-        # Create workflow execution record
-        db_workflow = models.WorkflowExecution(
-            apps_execution_id=len(list(self.db.query(models.WorkflowExecution).all())) + 1,
-            status="RUNNING",
-            raw_execution_json=workflow_config.dict()
-        )
-        self.db.add(db_workflow)
-        self.db.commit()
-        self.db.refresh(db_workflow)
-
-        # Start workflow execution in background
-        await self.orchestrator.start_workflow(db_workflow.id, workflow_config)
+    def build_workflow_graph(self, workflow_config: schemas.WorkflowConfig) -> StateGraph:
+        """Build a StateGraph from workflow configuration"""
+        workflow = StateGraph(WorkflowState)
         
-        return db_workflow
+        # First check for start node
+        try:
+            start_node = next(node.id for node in workflow_config.nodes if node.type == "start")
+        except StopIteration:
+            raise ValueError("No start node found in workflow configuration")
+        
+        # Add nodes with type-specific functions
+        for node in workflow_config.nodes:
+            if node.type == "start":
+                def node_function(state: WorkflowState):
+                    state["current_node"] = node.id
+                    state["output"][node.id] = {"type": "start", "status": "executed"}
+                    return state
+            
+            elif node.type == "code":
+                def node_function(state: WorkflowState):
+                    state["current_node"] = node.id
+                    result = self.code_handler.execute(state, node.data.code)
+                    state["output"][node.id] = {
+                        "type": "code",
+                        "result": result,
+                        "status": "executed"
+                    }
+                    return state
+            
+            elif node.type == "llm":
+                def node_function(state: WorkflowState):
+                    state["current_node"] = node.id
+                    result = self.llm_handler.execute(state, node.data.prompt)
+                    state["output"][node.id] = {
+                        "type": "llm",
+                        "result": result,
+                        "status": "executed"
+                    }
+                    return state
+            
+            elif node.type == "api":
+                def node_function(state: WorkflowState):
+                    state["current_node"] = node.id
+                    result = self.api_handler.execute(state, node.data.endpoint)
+                    state["output"][node.id] = {
+                        "type": "api",
+                        "result": result,
+                        "status": "executed"
+                    }
+                    return state
+            
+            elif node.type == "end":
+                def node_function(state: WorkflowState):
+                    state["current_node"] = node.id
+                    state["output"][node.id] = {"type": "end", "status": "executed"}
+                    return state
+            
+            workflow.add_node(node.id, node_function)
+
+        # Add edges
+        for edge in workflow_config.edges:
+            workflow.add_edge(edge.source, edge.target)
+
+        # Connect end node to END state
+        end_node = next(node.id for node in workflow_config.nodes if node.type == "end")
+        workflow.add_edge(end_node, END)
+
+        # Set entry point
+        workflow.set_entry_point(start_node)
+
+        # Print detailed graph structure
+        print("\nDetailed Workflow Graph Structure:")
+        print("--------------------------------")
+        print("Nodes:")
+        for node_id, node_func in workflow.nodes.items():
+            node_type = next((n.type for n in workflow_config.nodes if n.id == node_id), "system")
+            print(f"  {node_id}:")
+            print(f"    Type: {node_type}")
+            print(f"    Function: {node_func}")
+        
+        print("\nEdges:")
+        for edge in workflow.edges:
+            print(f"  {edge[0]} -> {edge[1]}")
+        
+        print(f"\nEntry Point: {workflow.entry_point}")
+        print("--------------------------------\n")
+        # Setting xray to 1 will show the internal structure of the nested graph
+        display(Image(graph.get_graph(xray=1).draw_mermaid_png()))
+
+        return workflow.compile()
+
+    async def create_workflow(self, workflow: schemas.Workflow) -> models.WorkflowExecution:
+        """Start a new workflow execution"""
+        try:
+            # Visualize the graph before execution
+            # self.visualize_graph(workflow.config, f"workflow_graph_{workflow.id}.png")
+            
+            workflow_execution = models.WorkflowExecution(
+                apps_execution_id=workflow.id,
+                status="RUNNING",
+                raw_execution_json=workflow.model_dump()
+            )
+            
+            self.db.add(workflow_execution)
+            self.db.commit()
+            self.db.refresh(workflow_execution)
+
+            # Build and run workflow graph
+            graph = self.build_workflow_graph(workflow.config)
+            initial_state = WorkflowState.create(workflow)
+            
+            try:
+                final_state = graph.invoke(initial_state)
+                workflow_execution.status = "COMPLETED"
+                workflow_execution.raw_execution_json = final_state
+            except Exception as e:
+                workflow_execution.status = "ERROR"
+                workflow_execution.error_message = f"Workflow execution failed: {str(e)}"
+                print(f"Error executing workflow: {str(e)}")
+                raise
+            
+            self.db.commit()
+            return workflow_execution
+        except Exception as e:
+            print(f"Error in create_workflow: {str(e)}")
+            raise
+
+    # async def create_workflow(self, workflow_config: schemas.WorkflowConfig) -> models.WorkflowExecution:
+    #     """Create and start a new workflow execution"""
+    #     # Create workflow execution record
+    #     db_workflow = models.WorkflowExecution(
+    #         apps_execution_id=len(list(self.db.query(models.WorkflowExecution).all())) + 1,
+    #         status="RUNNING",
+    #         raw_execution_json=workflow_config.dict()
+    #     )
+    #     self.db.add(db_workflow)
+    #     self.db.commit()
+    #     self.db.refresh(db_workflow)
+
+    #     # Start workflow execution in background
+    #     await self.start_workflow(workflow_config)
+        
+    #     return db_workflow
 
     async def get_workflow_logs(self, apps_execution_id: int) -> schemas.WorkflowResponse:
         """Get logs for a specific workflow execution"""

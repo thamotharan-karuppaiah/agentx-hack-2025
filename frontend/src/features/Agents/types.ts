@@ -23,6 +23,10 @@ export interface Agent {
     actions: AgentAction[];
     workspaceId: string;
     createdBy: string;
+    connectedAgents?: Array<{
+        id: string;
+        name: string;
+    }>;
 }
 
 export interface AgentAction {

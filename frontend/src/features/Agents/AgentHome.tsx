@@ -71,6 +71,7 @@ const AgentHome: React.FC = () => {
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [selectedAgent, setSelectedAgent] = useState<Agent | undefined>();
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const isInIframe = window.self !== window.top;
 
   useEffect(() => {
     const fetchAgents = async () => {
@@ -272,29 +273,42 @@ const AgentHome: React.FC = () => {
   return (
     <>
       <div className="flex flex-col min-h-full">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div className="space-y-0.5">
-            <h2 className="text-2xl font-bold tracking-tight">
-              Agents
-            </h2>
-          </div>
-          <div className="ml-auto">
-            <Button onClick={handleCreateAgent}>
-              Create Agent
-            </Button>
-          </div>
-        </div>
-        <div
-          data-orientation="horizontal"
-          role="none"
-          className="shrink-0 bg-border h-[1px] w-full mt-6"
-        />
+        {/* Header - only show when not in iframe */}
+        {!isInIframe && (
+          <>
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <h2 className="text-2xl font-bold tracking-tight">
+                  Agents
+                </h2>
+              </div>
+              <div className="ml-auto">
+                <Button onClick={handleCreateAgent}>
+                  Create Agent
+                </Button>
+              </div>
+            </div>
+
+            <div
+              data-orientation="horizontal"
+              role="none"
+              className="shrink-0 bg-border h-[1px] w-full mt-6 mb-6"
+            />
+          </>
+        )}
 
         {/* Main Content */}
-        <div className="flex-1 mt-6">
+        <div className="flex-1">
           <div className="space-y-4">
-            <div className="flex justify-end items-center gap-2">
+            <div className="flex justify-end items-center gap-4">
+              {isInIframe && (
+                <Button 
+                  onClick={handleCreateAgent}
+                  className="shrink-0"
+                >
+                  Create Agent
+                </Button>
+              )}
               <div className="relative w-64">
                 <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input
@@ -305,6 +319,7 @@ const AgentHome: React.FC = () => {
                 />
               </div>
             </div>
+
             <div className="rounded-md border">
               <Table>
                 <TableHeader>

@@ -2,3 +2,10 @@ dist
 temp
 node_modules
 .DS_Store
+*.pyc
+*.fish
+*.csh
+*.ps1
+/backend/workflow-langgraph/.venv
+/backend/workflow-langgraph/cloudverse/__pycache__
+/backend/workflow-langgraph/.idea

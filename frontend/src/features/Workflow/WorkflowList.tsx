@@ -53,6 +53,7 @@ import {
 } from "@/components/ui/popover";
 import { useSearchParams, useNavigate, useParams } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
+import { WorkflowTemplateModal } from './components/WorkflowTemplateModal';
 
 const WorkflowMain: React.FC = () => {
   const [loading, setLoading] = useState(false);
@@ -80,6 +81,7 @@ const WorkflowMain: React.FC = () => {
   const { toast } = useToast();
   const [isDeleting, setIsDeleting] = useState(false);
   const isInIframe = window.self !== window.top;
+  const [templateModalOpen, setTemplateModalOpen] = useState(false);
   useParams();
 
   useEffect(() => {
@@ -495,13 +497,13 @@ const WorkflowMain: React.FC = () => {
               onClick={handleCreateWorkflow}
               className="shrink-0"
             >
-              Create Workflow
+              Create tool
             </Button>
           )}
           <div className="relative w-64">
             <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Search workflows..."
+              placeholder="Search tools..."
               value={searchQuery}
               onChange={(e) => handleSearch(e.target.value)}
               className="pl-8"
@@ -577,11 +579,20 @@ const WorkflowMain: React.FC = () => {
     );
   };
 
-  const handleCreateWorkflow = useCallback(async () => {
-     let workflow = await workflowService.createWorkflow({name:''});
-     console.log(workflow);
-     navigate(`${workflow.id}/edit`);
-  }, [navigate]);
+  const handleCreateWorkflow = useCallback(() => {
+    setTemplateModalOpen(true);
+  }, []);
+
+  const handleTemplateSelect = async (templateId: string) => {
+    setTemplateModalOpen(false);
+    if (templateId === 'blank') {
+      let workflow = await workflowService.createWorkflow({name:''});
+      navigate(`${workflow.id}/edit`);
+    } else {
+      let workflow = await workflowService.createWorkflow({name:''});
+      navigate(`${workflow.id}/edit`);
+    }
+  };
 
   return (
     <div className="flex flex-col min-h-full">
@@ -591,12 +602,12 @@ const WorkflowMain: React.FC = () => {
           <div className="flex items-center justify-between">
             <div className="space-y-0.5">
               <h2 className="text-2xl font-bold tracking-tight">
-                Workflows
+                Tools
               </h2>
             </div>
             <div className="ml-auto">
               <Button onClick={handleCreateWorkflow}>
-                Create Workflow
+                Create tool
               </Button>
             </div>
           </div>
@@ -619,6 +630,12 @@ const WorkflowMain: React.FC = () => {
           {workflows.length} Workflows
         </div>
       </div>
+
+      <WorkflowTemplateModal 
+        open={templateModalOpen}
+        onOpenChange={setTemplateModalOpen}
+        onTemplateSelect={handleTemplateSelect}
+      />
     </div>
   );
 };

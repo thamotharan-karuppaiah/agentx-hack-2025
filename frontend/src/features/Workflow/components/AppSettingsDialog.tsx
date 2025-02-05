@@ -68,7 +68,7 @@ export const AppSettingsDialog = ({
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="sm:max-w-[600px]">
                 <DialogHeader className="flex flex-row items-center justify-between">
-                    <DialogTitle>App Settings</DialogTitle>
+                    <DialogTitle>Tool Settings</DialogTitle>
                     {isSaving ? (
                         <span className="text-muted-foreground text-sm flex items-center gap-1.5">Saving...</span>
                     ) : (
@@ -81,23 +81,23 @@ export const AppSettingsDialog = ({
 
                 <div className="space-y-6 py-4">
                     <div className="space-y-2">
-                        <label className="text-sm font-medium">App Name</label>
+                        <label className="text-sm font-medium">Tool Name</label>
                         <Input
                             value={localSettings.name}
                             onChange={handleChange('name')}
-                            placeholder="Enter app name"
+                            placeholder="Enter tool name"
                         />
                     </div>
 
                     <div className="space-y-2">
                         <label className="text-sm font-medium flex items-center justify-between">
-                            App Description
+                            Tool Description
                             <span className="text-sm text-muted-foreground">(Optional)</span>
                         </label>
                         <Textarea
                             value={localSettings.description}
                             onChange={handleChange('description')}
-                            placeholder="Write an optional description for your app."
+                            placeholder="Write an optional description for your tool."
                             className="h-24 resize-none"
                         />
                     </div>

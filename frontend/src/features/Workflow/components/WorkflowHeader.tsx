@@ -57,14 +57,14 @@ export const WorkflowHeader = () => {
       updateWorkflowField('status', 'published');
       toast({
         title: "Success",
-        description: "Workflow has been published successfully",
+        description: "Tool has been published successfully",
       });
       setShowPublishSettings(false);
     } catch (error) {
-      console.error('Failed to publish workflow:', error);
+      console.error('Failed to publish tool:', error);
       toast({
         title: "Error",
-        description: "Failed to publish workflow",
+        description: "Failed to publish tool",
         variant: "destructive",
       });
     } finally {
@@ -136,7 +136,7 @@ export const WorkflowHeader = () => {
 
       {/* Center Section - Absolute Positioning */}
       <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2">
-        <h2 className="text-lg font-semibold">{name || 'Untitled Workflow'}</h2>
+        <h2 className="text-lg font-semibold">{name || 'Untitled tool'}</h2>
         <Button
           variant="ghost"
           size="icon"
@@ -217,7 +217,7 @@ export const WorkflowHeader = () => {
                   Publishing...
                 </>
               ) : (
-                'Publish Workflow'
+                'Publish Tool'
               )}
             </Button>
           )}

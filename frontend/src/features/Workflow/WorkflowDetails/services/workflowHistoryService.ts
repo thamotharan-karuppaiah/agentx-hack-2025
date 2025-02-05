@@ -6,7 +6,7 @@ export interface HistoryEntry {
   createdAt: string;
   runtime?: string;
   tasks: number;
-  source: 'web' | 'grid_table' | 'api';
+  source: 'web' | 'agent' | 'api';
   // Dynamic input fields
   inputs: Record<string, any>;
 }
@@ -14,7 +14,7 @@ export interface HistoryEntry {
 // Generate mock data with input fields
 const generateMockData = (): HistoryEntry[] => {
   const statuses: HistoryEntry['status'][] = ['running', 'review_needed', 'cancelled', 'success'];
-  const sources: HistoryEntry['source'][] = ['web', 'grid_table', 'api'];
+  const sources: HistoryEntry['source'][] = ['web', 'agent', 'api'];
   const mockData: HistoryEntry[] = [];
 
   // Sample input values

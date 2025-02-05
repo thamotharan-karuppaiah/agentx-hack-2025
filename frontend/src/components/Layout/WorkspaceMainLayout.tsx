@@ -11,16 +11,18 @@ const TabNavigation = () => {
 	const navigate = useNavigate();
 	const location = useLocation();
 	const currentPath = location.pathname; // Get the first segment of the path
-
+	// read query parma wsId
+	const searchParams = new URLSearchParams(window.location.search);
+	const wsId = searchParams.get('wsId') || '1';
 	const tabs = [
 		{
 			title: "Agents",
-			url: "ws/1/agents",
+			url: `agents`,
 			icon: Brain
 		},
 		{
-			title: "Workflows",
-			url: "ws/1/workflows",
+			title: "Tools",
+			url: `workflows`,
 			icon: WorkflowIcon
 		}
 	];
@@ -33,10 +35,10 @@ const TabNavigation = () => {
 				return (
 					<button
 						key={tab.url}
-						onClick={() => navigate(`/${tab.url}`)}
+						onClick={() => navigate(`${tab.url}`)}
 						className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${isActive
-								? 'border-blue-500 text-blue-600'
-								: 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+							? 'border-blue-500 text-blue-600'
+							: 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
 							}`}
 					>
 						<Icon className="w-4 h-4" />

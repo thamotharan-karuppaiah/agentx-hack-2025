@@ -40,6 +40,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { TemplateSelectionModal } from './components/TemplateSelectionModal';
 
 interface SortConfig {
   key: keyof Agent | null;
@@ -72,6 +73,7 @@ const AgentHome: React.FC = () => {
   const [selectedAgent, setSelectedAgent] = useState<Agent | undefined>();
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const isInIframe = window.self !== window.top;
+  const [templateModalOpen, setTemplateModalOpen] = useState(false);
 
   useEffect(() => {
     const fetchAgents = async () => {
@@ -231,9 +233,19 @@ const AgentHome: React.FC = () => {
   );
 
   const handleCreateAgent = useCallback(() => {
-    setSelectedAgent(undefined);
-    setCreateModalOpen(true);
+    setTemplateModalOpen(true);
   }, []);
+
+  const handleTemplateSelect = (templateId: string) => {
+    setTemplateModalOpen(false);
+    if (templateId === 'blank') {
+      setSelectedAgent(undefined);
+      setCreateModalOpen(true);
+    } else {
+      setSelectedAgent(undefined);
+      setCreateModalOpen(true);
+    }
+  };
 
   const handleModalClose = () => {
     setCreateModalOpen(false);
@@ -423,6 +435,12 @@ const AgentHome: React.FC = () => {
           </div>
         </div>
       </div>
+
+      <TemplateSelectionModal 
+        open={templateModalOpen}
+        onOpenChange={setTemplateModalOpen}
+        onTemplateSelect={handleTemplateSelect}
+      />
 
       <CreateAgentModal 
         open={createModalOpen}

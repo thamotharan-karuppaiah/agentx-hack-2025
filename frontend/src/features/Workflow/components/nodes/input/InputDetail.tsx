@@ -32,9 +32,9 @@ export function InputDetail({ data }: NodeDetailProps) {
   if (!hasFields) {
     return (
       <div className="p-4 bg-green-50/50 rounded-lg border border-green-100">
-        <h3 className="text-[15px] font-semibold text-green-800">Define your workflow inputs</h3>
+        <h3 className="text-[15px] font-semibold text-green-800">Define your tool inputs</h3>
         <p className="text-[14px] text-green-700 mt-1.5 leading-relaxed">
-          Start by adding input fields that will be used throughout your workflow
+          Start by adding input fields that will be used throughout your tool
         </p>
       </div>
     );

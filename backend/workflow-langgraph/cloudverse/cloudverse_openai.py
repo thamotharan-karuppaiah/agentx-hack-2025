@@ -41,6 +41,7 @@ class CloudverseChat(BaseChatModel):
     tools: List[Tool] = Field(default_factory=list, description="List of available tools")
     tool_callbacks: Dict[str, Callable] = Field(default_factory=dict, description="Tool callback functions")
     chat_history: List[Dict[str, Any]] = Field(default_factory=list, description="Chat history")
+    stream: bool = Field(default="false", description="Text or streaming support")
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -88,6 +89,7 @@ class CloudverseChat(BaseChatModel):
             "maxTokens": self.max_tokens,
             "toolChoice": self.tool_choice,
             "tools": self.tools,
+            "stream": self.stream
         }
 
         return payload

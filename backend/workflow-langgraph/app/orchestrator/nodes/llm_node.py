@@ -6,7 +6,8 @@ from langchain_core.messages import (
     FunctionMessage,
     BaseMessage
 )
-from langchain_openai import ChatOpenAI
+# from langchain_openai import ChatOpenAI
+from cloudverse.cloudverse_openai import CloudverseChat
 from pydantic import BaseModel, Field
 from enum import Enum
 
@@ -35,13 +36,18 @@ class LLMNodeConfig(BaseModel):
 class LLMNode:
     def __init__(self, config: Dict[str, Any], api_key: str):
         self.config = LLMNodeConfig(**config.get("config", {}))
-        self.llm = ChatOpenAI(
-            model=self.config.model,
-            temperature=self.config.temperature,
-            max_tokens=self.config.max_tokens,
-            streaming=self.config.streaming,
-            api_key=api_key
-        )
+        # self.llm = ChatOpenAI(
+        #     model=self.config.model,
+        #     temperature=self.config.temperature,
+        #     max_tokens=self.config.max_tokens,
+        #     streaming=self.config.streaming,
+        #     api_key=api_key
+        # )
+        PROXY_URL = 'https://cloudverse.freshworkscorp.com'
+        PROXY_TOKEN = 'eyJhbGciOiJIUzI1NiJ9.eyJ1c2VyIjp7Im5hbWUiOiJSYW1yYXRhbiBKYXZhIiwiZW1haWwiOiJyYW1yYXRhbi5qYXZhQGZyZXNod29ya3MuY29tIiwiaW1hZ2UiOiJodHRwczovL2xoMy5nb29nbGV1c2VyY29udGVudC5jb20vYS9BQ2c4b2NJSGNkaFNnTTFFTW1obDAweXdwMmpjaWEtQ0pzQkQwTUE4NzhsZG1BYmN3YWswSnc9czk2LWMiLCJpZCI6IjY3YTIwY2EzMGUyNThhNjc4OTU4YmJmMSJ9LCJleHBpcmVzIjoiMjAyNS0wMi0wNFQxNDo1MzoxMS4wMDlaIiwianRpIjoiR1E1dGhiTExxZU9DbGpLNVMwU0ZUIiwiaWF0IjoxNzM4NjczNTk2LCJleHAiOjE3MzkyNzgzOTZ9.Vxd9MVeKbTsTg7DhJ5g39-65PCXslAd6RAi4TZTyeHw'
+        self.llm = CloudverseChat(proxy_url=PROXY_URL, auth_token=PROXY_TOKEN,
+                               model_name=self.config.model, temperature=self.config.temperature,
+                               max_tokens=self.config.max_tokens, stream=self.config.streaming)
         self.message_history: List[BaseMessage] = []
         if self.config.system_message:
             self.message_history.append(SystemMessage(content=self.config.system_message))

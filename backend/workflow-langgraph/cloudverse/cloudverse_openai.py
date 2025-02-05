@@ -1,13 +1,16 @@
-from typing import Any, List, Optional, TypedDict, Dict, Callable
+from typing import Any, List, Optional, TypedDict, Dict, Callable, Union, Tuple
 from langchain.schema import BaseMessage, ChatResult, AIMessage, HumanMessage, SystemMessage, ChatGeneration, \
     FunctionMessage
 from langchain_core.language_models import BaseChatModel
-from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
+from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult, LLMResult
+from langchain_core.callbacks import CallbackManagerForLLMRun
+from langchain_core.messages import BaseMessage
 from pydantic import Field, model_validator
 from enum import Enum
 import json
 import requests
-from dataclasses import dataclass
+import tiktoken
+from datetime import datetime
 
 
 class MessageRole(str, Enum):
@@ -18,26 +21,10 @@ class MessageRole(str, Enum):
     FUNCTION = "function"
 
 
-class ToolInputParameter(TypedDict):
-    type: str
-    description: str
-
-
-class ToolProperties(TypedDict):
-    input: ToolInputParameter
-
-
-class ToolParametersSchema(TypedDict):
-    type: str
-    properties: ToolProperties
-    required: List[str]
-    additionalProperties: bool
-
-
 class Tool(TypedDict):
     toolName: str
     description: str
-    parameters: ToolParametersSchema
+    parameters: Dict[str, Any]
 
 
 class CloudverseChat(BaseChatModel):
@@ -53,6 +40,10 @@ class CloudverseChat(BaseChatModel):
     request_timeout: Optional[float] = Field(default=30.0, description="Timeout for requests to the proxy")
     tools: List[Tool] = Field(default_factory=list, description="List of available tools")
     tool_callbacks: Dict[str, Callable] = Field(default_factory=dict, description="Tool callback functions")
+    chat_history: List[Dict[str, Any]] = Field(default_factory=list, description="Chat history")
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
     def register_tool(self, tool: Tool, callback: Callable) -> None:
         """Register a tool and its callback function."""
@@ -73,13 +64,18 @@ class CloudverseChat(BaseChatModel):
             role = message_dict.get(type(message), MessageRole.USER.value)
             msg_dict = {
                 "role": role,
-                "content": str(message.content)
+                "content": str(message.content),
+                "timestamp": datetime.utcnow().isoformat(),
             }
 
             if isinstance(message, FunctionMessage):
                 msg_dict["name"] = message.name
 
+            if hasattr(message, "additional_kwargs"):
+                msg_dict.update(message.additional_kwargs)
+
             converted_messages.append(msg_dict)
+            self.chat_history.append(msg_dict)
 
         payload = {
             "messages": converted_messages,
@@ -91,17 +87,42 @@ class CloudverseChat(BaseChatModel):
             "stop": [],
             "maxTokens": self.max_tokens,
             "toolChoice": self.tool_choice,
-            "tools": self.tools
+            "tools": self.tools,
         }
 
         return payload
 
-    def _handle_tool_call(self, tool_call: Dict[str, Any]) -> str:
-        """Handle tool calls and execute the corresponding callback."""
+    def _create_message_dicts(
+            self, messages: List[BaseMessage], stop: Optional[List[str]]
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        params = {
+            "model": self.model_name,
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "frequency_penalty": self.frequency_penalty,
+            "presence_penalty": self.presence_penalty,
+            "max_tokens": self.max_tokens,
+        }
+        if stop is not None:
+            params["stop"] = stop
+        message_dicts = [self._convert_message_to_dict(m) for m in messages]
+        return message_dicts, params
 
+    def _convert_message_to_dict(self, message: BaseMessage) -> Dict[str, Any]:
+        """Convert a LangChain message to a dictionary format."""
+        message_dict = {
+            "role": message.type,
+            "content": message.content,
+        }
+        if message.additional_kwargs:
+            message_dict.update(message.additional_kwargs)
+        return message_dict
+
+    def _handle_tool_call(self, tool_call: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+        """Handle tool calls and execute the corresponding callback."""
         tool_name = tool_call.get("toolName")
-        # Extract arguments and handle input parameter specifically
         arguments = tool_call.get("args", "{}")
+
         if isinstance(arguments, str):
             try:
                 args = json.loads(arguments)
@@ -110,75 +131,149 @@ class CloudverseChat(BaseChatModel):
         else:
             args = arguments
 
+        tool_response = {
+            "tool_name": tool_name,
+            "tool_call_id": tool_call.get("id", ""),
+            "arguments": args,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+
         if tool_name in self.tool_callbacks:
             try:
-                # Pass the input argument directly
                 result = self.tool_callbacks[tool_name](args.get("input", ""))
-                return str(result)
+                tool_response["status"] = "success"
+                tool_response["result"] = str(result)
+                return str(result), tool_response
             except Exception as e:
                 error_msg = f"Error executing tool {tool_name}: {str(e)}"
-                return error_msg
+                tool_response["status"] = "error"
+                tool_response["error"] = str(e)
+                return error_msg, tool_response
 
         error_msg = f"Tool {tool_name} not found"
-        return error_msg
+        tool_response["status"] = "error"
+        tool_response["error"] = error_msg
+        return error_msg, tool_response
 
     def _generate(
             self,
             messages: List[BaseMessage],
             stop: Optional[List[str]] = None,
-            run_manager: Optional[Any] = None,
+            run_manager: Optional[CallbackManagerForLLMRun] = None,
             **kwargs: Any,
     ) -> ChatResult:
-        """Generate a chat response through cloudverse with tool support."""
+        """Generate a chat response with comprehensive metadata and history."""
         headers = {
             "Authorization": f"Bearer {self.auth_token}",
             "Content-Type": "application/json"
         }
 
         payload = self._convert_messages_to_cloudverse_format(messages)
-
         if stop:
             payload["stop"] = stop
 
         try:
-
             response = requests.post(
                 f"{self.proxy_url}/api/v2/chat",
                 headers=headers,
                 json=payload,
-                timeout=self.request_timeout if self.request_timeout is not None else None
+                timeout=self.request_timeout
             )
-
             response.raise_for_status()
             response_data = response.json()
 
-            usage = response_data.get("usage", {})
-            metadata = dict([('prompt_tokens', usage.get("promptTokens", 0)),
-                             ('completion_token', usage.get("completionTokens", 0)),
-                             ('total_tokens', usage.get("totalTokens", 0)),
-                             ('tool_calls', response_data.get("toolCalls", [])),
-                             ('model', response_data.get("model", self.model_name)),
-                             ('finish_reason', response_data.get("finishReason", ""))]
-                            )
-
-            # Check for tool calls in different possible formats
+            # Process tool calls if any
             tool_calls = response_data.get("toolCalls", [])
+            tool_outputs = []
+            final_response_data = response_data
+
             if tool_calls:
-                tool_results = []
                 for tool_call in tool_calls:
-                    result = self._handle_tool_call(tool_call)
-                    tool_results.append(FunctionMessage(
+                    result, tool_info = self._handle_tool_call(tool_call)
+                    tool_outputs.append(tool_info)
+                    messages.append(FunctionMessage(
                         content=result,
-                        name=tool_call["toolName"]
+                        name=tool_call["toolName"],
+                        additional_kwargs={"tool_info": tool_info}
                     ))
 
-                if tool_results:
-                    messages.extend(tool_results)
-                    return self._create_chat_result(tool_results[0].content, metadata)
+                # Make another API call with the tool results
+                payload = self._convert_messages_to_cloudverse_format(messages)
+                response = requests.post(
+                    f"{self.proxy_url}/api/v2/chat",
+                    headers=headers,
+                    json=payload,
+                    timeout=self.request_timeout
+                )
+                response.raise_for_status()
+                final_response_data = response.json()
 
-            response_message = response_data.get("text", "")
-            return self._create_chat_result(response_message, metadata)
+                # If the final response also has tool calls, use the last tool result as the response
+                if final_response_data.get("toolCalls"):
+                    final_response_data["text"] = tool_outputs[-1]["result"]
 
+            # Create generation info
+            generation_info = {
+                "finish_reason": final_response_data.get("finish_reason"),
+                "logprobs": final_response_data.get("logprobs"),
+                "token_usage": final_response_data.get("usage", {}),
+                "model": final_response_data.get("model", self.model_name),
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+
+            if tool_outputs:
+                generation_info["tool_outputs"] = tool_outputs
+
+            # Create LLM output
+            llm_output = {
+                "token_usage": final_response_data.get("usage", {}),
+                "model_name": self.model_name,
+                "system_fingerprint": final_response_data.get("system_fingerprint"),
+                "raw_response": final_response_data,
+                "message_uuid": final_response_data.get("id"),
+                "session_info": {
+                    "session_id": final_response_data.get("session_id"),
+                    "conversation_id": final_response_data.get("conversation_id"),
+                },
+                "tool_usage": {
+                    "total_tools_called": len(tool_calls),
+                    "tool_calls": tool_outputs
+                },
+                "api_version": final_response_data.get("api_version"),
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+
+            # Get content from the final response or the last tool result
+            content = final_response_data.get("text", "")
+            if not content and tool_outputs:
+                content = tool_outputs[-1]["result"]
+
+            # Create the message and generation
+            message = AIMessage(
+                content=content,
+                additional_kwargs={
+                    "raw_response": final_response_data,
+                    "tool_outputs": tool_outputs if tool_outputs else None
+                }
+            )
+
+            generation = ChatGeneration(
+                message=message,
+                generation_info=generation_info
+            )
+
+            # Update chat history
+            self.chat_history.append({
+                "role": "assistant",
+                "content": content,
+                "timestamp": datetime.utcnow().isoformat(),
+                "metadata": generation_info
+            })
+
+            return ChatResult(
+                generations=[generation],
+                llm_output=llm_output
+            )
 
         except requests.RequestException as e:
             error_msg = f"Proxy request failed: {str(e)}"
@@ -188,7 +283,3 @@ class CloudverseChat(BaseChatModel):
     def _llm_type(self) -> str:
         """Return identifier for the LLM type."""
         return "cloudverse"
-
-    def _create_chat_result(self, message: str, metadata: dict) -> ChatResult:
-        message = AIMessage(content=message)
-        return ChatResult(generations=[ChatGeneration(message=message)], llm_output=metadata)

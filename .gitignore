@@ -2,3 +2,8 @@ dist
 temp
 node_modules
 .DS_Store
+*.pyc
+*.fish
+*.csh
+*.ps1
+/backend/workflow-langgraph/.venv

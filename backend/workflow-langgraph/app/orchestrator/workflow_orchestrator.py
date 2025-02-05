@@ -1,19 +1,41 @@
 from typing import Dict, Any, List
 from langgraph.graph import StateGraph, END
-from langgraph.checkpoint import PostgresCheckpoint
+# from langgraph.checkpoint.postgres import PostgresSaver
 from langchain_core.messages import HumanMessage
-from langchain_openai import ChatOpenAI
+from psycopg import Connection
 from ..config import settings
 from .nodes.llm_node import LLMNode, MessageConfig, MessageType
 import asyncio
+from langgraph.checkpoint.postgres import PostgresSaver
+
 
 class WorkflowOrchestrator:
     def __init__(self):
-        self.checkpoint = PostgresCheckpoint(
-            connection_string=settings.DATABASE_URL,
-            namespace="workflow"
+        # Connection configuration
+        self.connection_kwargs = {
+            "autocommit": True,
+            "prepare_threshold": 0,
+        }
+        
+        # Create database connection and checkpointer
+        self.conn = Connection.connect(
+            settings.DATABASE_URL,
+            **self.connection_kwargs
         )
+        self.checkpoint = PostgresSaver(self.conn)
+        
+        # Setup checkpoint table if not exists
+        self.checkpoint.setup()
+        
         self.nodes: Dict[str, Any] = {}
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        # Ensure connection is closed when done
+        if hasattr(self, 'conn') and self.conn:
+            self.conn.close()
 
     def create_node(self, node_config: Dict[str, Any]):
         """Create a node based on its type"""
@@ -85,7 +107,7 @@ class WorkflowOrchestrator:
         # Build graph
         graph = self.build_graph(workflow_config)
         
-        # Create initial state
+        # Create initial state and config
         initial_state = {
             "workflow_id": workflow_id,
             "input": workflow_config.get("input", ""),
@@ -93,10 +115,17 @@ class WorkflowOrchestrator:
             "error": None
         }
         
+        config = {
+            "configurable": {
+                "workflow_id": str(workflow_id)
+            }
+        }
+        
         try:
             # Execute graph with checkpointing
             async for state in graph.astream(
                 initial_state,
+                config=config,
                 checkpoint=self.checkpoint
             ):
                 # State updates are automatically checkpointed

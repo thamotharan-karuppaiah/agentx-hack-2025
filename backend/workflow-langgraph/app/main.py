@@ -1,11 +1,9 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from .database import engine, Base
 from .routers import workflow_router
 from .config import settings
 
 # Create database tables
-Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="AI Workflow Orchestration API",

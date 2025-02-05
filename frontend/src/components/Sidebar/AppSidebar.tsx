@@ -64,21 +64,21 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     navSecondary: [
       {
         name: "What's new",
-        url: "https://www.google.com",
+        url: "https://www.freshworks.com/product-launches/?tactic_id=6778534",
         icon: Frame,
         external: true,
         isVisible: () => true
       },
       {
         name: "Help and support",
-        url: "https://www.google.com",
+        url: "https://www.freshworks.com/freshdesk/omni/freddy-ai-automation/",
         icon: PieChart,
         external: true,
         isVisible: () => true
       },
       {
         name: "Settings",
-        url: "settings",
+        url: "/",
         icon: Settings,
         external: false,
         isVisible: true

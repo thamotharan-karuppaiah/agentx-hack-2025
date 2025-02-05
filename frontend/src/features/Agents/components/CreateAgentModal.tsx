@@ -126,8 +126,8 @@ const sections = [
 interface CreateAgentModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  agent?: Agent;
-  onSuccess?: () => void;
+  agent?: Agent | null;
+  onSuccess: (agent: Agent) => void | Promise<void>;
 }
 
 export function CreateAgentModal({ 
@@ -195,7 +195,7 @@ export function CreateAgentModal({
         });
       }
 
-      onSuccess?.();
+      onSuccess(data as Agent);
       onOpenChange(false);
     } catch (error) {
       console.error('Failed to save agent:', error);

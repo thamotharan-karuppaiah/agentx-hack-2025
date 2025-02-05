@@ -28,9 +28,9 @@ export function WorkspaceSwitcher() {
           size="lg"
           className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
         >
-          <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+          <div className="flex aspect-square size-8 items-center justify-center rounded-lg text-sidebar-primary-foreground">
             <span className="text-sm font-medium">
-              <img src={Logo} alt="Logo" className="w-4 h-4" />
+              <img src={Logo} alt="Logo" className="w-6 h-6" />
             </span>
           </div>
           <div className="grid flex-1 text-left text-sm leading-tight">

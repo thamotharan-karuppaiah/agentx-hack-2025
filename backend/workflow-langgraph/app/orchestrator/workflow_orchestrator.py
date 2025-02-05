@@ -21,6 +21,7 @@ class WorkflowState(BaseModel):
     execution_log: List = []
     node_inputs: Dict[str, Any] = {}  # Store inputs for each node
     node_outputs: Dict[str, Any] = {}  # Store outputs for each node
+    message_history: Dict[str, List[Dict[str, Any]]] = {}  # Store message history for each node
 
     class Config:
         arbitrary_types_allowed = True
@@ -33,7 +34,8 @@ class WorkflowState(BaseModel):
             "error": self.error,
             "execution_log": self.execution_log,
             "node_inputs": self.node_inputs,
-            "node_outputs": self.node_outputs
+            "node_outputs": self.node_outputs,
+            "message_history": self.message_history
         }
 
 class WorkflowOrchestrator:
@@ -63,21 +65,31 @@ class WorkflowOrchestrator:
     def create_node(self, node_config: Dict[str, Any]):
         """Create a node based on its type"""
         node_type = node_config.get("type")
+        node_name = node_config.get("name")  # Prioritize name over id
         node_id = node_config.get("id")
+        
+        # Ensure we have a name for the node, fallback to id if name not provided
+        node_config["name"] = node_name or node_id
         
         if node_type == "start":
             return self._create_start_node(node_config)
         elif node_type == "end":
             return self._create_end_node(node_config)
         elif node_type == "llm":
-            return LLMNode(node_config)
+            llm_node = LLMNode(node_config)
+            self.nodes[node_config["name"]] = llm_node
+            return llm_node
         elif node_type == "api":
-            return APINode(node_config)
+            api_node = APINode(node_config)
+            self.nodes[node_config["name"]] = api_node
+            return api_node
         elif node_type == "code":
-            return CodeNode(node_config)
+            code_node = CodeNode(node_config)
+            self.nodes[node_config["name"]] = code_node
+            return code_node
         elif node_type == "human":
             human_node = HumanNode(node_config)
-            self.nodes["human"] = human_node
+            self.nodes[node_config["name"]] = human_node
             return human_node
         else:
             raise ValueError(f"Unknown node type: {node_type}")
@@ -254,6 +266,7 @@ class WorkflowOrchestrator:
             execution_log=[],
             node_inputs=initial_inputs if initial_inputs else {},
             node_outputs={},
+            message_history={},
         )
         
         return initial_state

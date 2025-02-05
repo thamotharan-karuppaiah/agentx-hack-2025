@@ -36,8 +36,11 @@ class LLMNodeConfig(BaseModel):
 
 class LLMNode:
     def __init__(self, config: Dict[str, Any]):
-        self.node_id = config.get("name", config.get("id", "llm"))
-        self.node_name = self.node_id
+        # Prioritize using name over id, ensuring we have a consistent node identifier
+        self.node_name = config.get("name")
+        if not self.node_name:
+            raise ValueError("LLM node must have a name")
+            
         self.config = LLMNodeConfig(**config.get("config", {}))
         # self.llm = ChatOpenAI(
         #     model=self.config.model,
@@ -112,11 +115,31 @@ class LLMNode:
             # Add response to history
             self.message_history.append(response)
             
-            # Prepare output with node-specific output key
+            # Convert message history to serializable format
+            serialized_history = []
+            for msg in self.message_history:
+                msg_type = "system" if isinstance(msg, SystemMessage) else \
+                          "human" if isinstance(msg, HumanMessage) else \
+                          "ai" if isinstance(msg, AIMessage) else \
+                          "function" if isinstance(msg, FunctionMessage) else "unknown"
+                
+                serialized_history.append({
+                    "type": msg_type,
+                    "content": msg.content,
+                    "additional_kwargs": msg.additional_kwargs
+                })
+            
+            # Prepare output with node-specific output key and detailed message history
             output = {
                 f"{self.node_name}.{self.config.output_key}": response.content,
-                f"{self.node_name}.message_history": [msg.content for msg in self.message_history]
+                f"{self.node_name}.message_history": serialized_history,
+                "node_output": response.content
             }
+            
+            # Update the workflow state's message history
+            if "message_history" not in state:
+                state["message_history"] = {}
+            state["message_history"][self.node_name] = serialized_history
             
             return output
             

@@ -1,0 +1,110 @@
+from typing import Dict, Any, List, Optional
+from langchain_core.messages import (
+    HumanMessage,
+    AIMessage,
+    SystemMessage,
+    FunctionMessage,
+    BaseMessage
+)
+from langchain_openai import ChatOpenAI
+from pydantic import BaseModel, Field
+from enum import Enum
+
+class MessageType(str, Enum):
+    HUMAN = "human"
+    AI = "ai"
+    SYSTEM = "system"
+    FUNCTION = "function"
+
+class MessageConfig(BaseModel):
+    type: MessageType
+    content: str
+    name: Optional[str] = None
+    function_name: Optional[str] = None
+
+class LLMNodeConfig(BaseModel):
+    model: str = Field(default="gpt-3.5-turbo")
+    temperature: float = Field(default=0.7)
+    system_message: Optional[str] = None
+    prompt_template: Optional[str] = None
+    output_key: str = Field(default="output")
+    input_key: str = Field(default="input")
+    max_tokens: Optional[int] = None
+    streaming: bool = Field(default=False)
+
+class LLMNode:
+    def __init__(self, config: Dict[str, Any], api_key: str):
+        self.config = LLMNodeConfig(**config.get("config", {}))
+        self.llm = ChatOpenAI(
+            model=self.config.model,
+            temperature=self.config.temperature,
+            max_tokens=self.config.max_tokens,
+            streaming=self.config.streaming,
+            api_key=api_key
+        )
+        self.message_history: List[BaseMessage] = []
+        if self.config.system_message:
+            self.message_history.append(SystemMessage(content=self.config.system_message))
+
+    def _create_message(self, message_config: MessageConfig) -> BaseMessage:
+        """Create a message based on its type"""
+        if message_config.type == MessageType.HUMAN:
+            return HumanMessage(content=message_config.content)
+        elif message_config.type == MessageType.AI:
+            return AIMessage(content=message_config.content)
+        elif message_config.type == MessageType.SYSTEM:
+            return SystemMessage(content=message_config.content)
+        elif message_config.type == MessageType.FUNCTION:
+            return FunctionMessage(
+                content=message_config.content,
+                name=message_config.function_name or "function"
+            )
+        raise ValueError(f"Unknown message type: {message_config.type}")
+
+    def _format_prompt(self, input_text: str) -> str:
+        """Format the prompt using the template if provided"""
+        if self.config.prompt_template:
+            return self.config.prompt_template.format(input=input_text)
+        return input_text
+
+    async def process(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """Process the input state and return the output state"""
+        try:
+            # Get input from state
+            input_text = state.get(self.config.input_key, "")
+            
+            # Format the input using template if provided
+            formatted_input = self._format_prompt(input_text)
+            
+            # Add input message to history
+            input_message = HumanMessage(content=formatted_input)
+            self.message_history.append(input_message)
+            
+            # Process messages through LLM
+            response = await self.llm.ainvoke(self.message_history)
+            
+            # Add response to history
+            self.message_history.append(response)
+            
+            # Update state with response
+            return {self.config.output_key: response.content}
+            
+        except Exception as e:
+            # Handle errors and add to state
+            error_msg = f"Error in LLM processing: {str(e)}"
+            return {
+                self.config.output_key: None,
+                "error": error_msg
+            }
+
+    async def add_message(self, message_config: MessageConfig) -> None:
+        """Add a message to the conversation history"""
+        message = self._create_message(message_config)
+        self.message_history.append(message)
+
+    def clear_history(self) -> None:
+        """Clear the message history except system message"""
+        if self.config.system_message:
+            self.message_history = [SystemMessage(content=self.config.system_message)]
+        else:
+            self.message_history = [] 

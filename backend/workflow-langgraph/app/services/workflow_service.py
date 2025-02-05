@@ -4,6 +4,8 @@ from typing import Dict, Any, List
 from langgraph.graph import StateGraph, END
 from .. import models, schemas
 from IPython.display import Image, display
+from ..orchestrator.workflow_orchestrator import WorkflowOrchestrator
+
 class WorkflowState(dict):
     """State object for the workflow"""
     def __init__(self, workflow_config: Dict = None):
@@ -120,57 +122,61 @@ class WorkflowService:
         return workflow.compile()
 
     async def create_workflow(self, workflow: schemas.Workflow) -> models.WorkflowExecution:
-        """Start a new workflow execution"""
+        """Create and execute a new workflow"""
         try:
-            # Visualize the graph before execution
-            # self.visualize_graph(workflow.config, f"workflow_graph_{workflow.id}.png")
-            
+            # Create workflow execution record
             workflow_execution = models.WorkflowExecution(
-                apps_execution_id=workflow.id,
+                apps_execution_id=str(workflow.id),
                 status="RUNNING",
-                raw_execution_json=workflow.model_dump()
+                raw_execution_json=workflow.model_dump(),
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow()
             )
             
-            self.db.add(workflow_execution)
-            self.db.commit()
-            self.db.refresh(workflow_execution)
+            # self.db.add(workflow_execution)
+            # self.db.commit()
+            # self.db.refresh(workflow_execution)
 
-            # Build and run workflow graph
-            graph = self.build_workflow_graph(workflow.config)
-            initial_state = WorkflowState.create(workflow)
-            
-            try:
-                final_state = graph.invoke(initial_state)
+            # Execute workflow using orchestrator
+            async with WorkflowOrchestrator() as orchestrator:
+                # Fix: Access dictionary key with ['type'] instead of .type
+                start_node = next((node for node in workflow.config.nodes if node['type'] == "start"), None)
+                initial_inputs = {}
+                if start_node:
+                    for group in start_node['data']['groups']:
+                        for field in group['fields']:
+                            initial_inputs[field['variableName']] = ""
+
+                # Execute workflow
+                execution_states = await orchestrator.execute_workflow(
+                    workflow_execution.id,
+                    workflow.config.dict(),
+                    initial_inputs
+                )
+
+                # Update workflow execution status
                 workflow_execution.status = "COMPLETED"
-                workflow_execution.raw_execution_json = final_state
-            except Exception as e:
-                workflow_execution.status = "ERROR"
-                workflow_execution.error_message = f"Workflow execution failed: {str(e)}"
-                print(f"Error executing workflow: {str(e)}")
-                raise
-            
-            self.db.commit()
-            return workflow_execution
+                workflow_execution.raw_execution_json = {
+                    "config": workflow.config.dict(),
+                    "execution_states": execution_states
+                }
+
+                if any(state.get("error") for state in execution_states):
+                    workflow_execution.status = "ERROR"
+                    workflow_execution.error_message = next(
+                        state["error"] for state in execution_states if state.get("error")
+                    )
+
+                self.db.commit()
+                return workflow_execution
+
         except Exception as e:
+            if workflow_execution:
+                workflow_execution.status = "ERROR"
+                workflow_execution.error_message = str(e)
+                self.db.commit()
             print(f"Error in create_workflow: {str(e)}")
             raise
-
-    # async def create_workflow(self, workflow_config: schemas.WorkflowConfig) -> models.WorkflowExecution:
-    #     """Create and start a new workflow execution"""
-    #     # Create workflow execution record
-    #     db_workflow = models.WorkflowExecution(
-    #         apps_execution_id=len(list(self.db.query(models.WorkflowExecution).all())) + 1,
-    #         status="RUNNING",
-    #         raw_execution_json=workflow_config.dict()
-    #     )
-    #     self.db.add(db_workflow)
-    #     self.db.commit()
-    #     self.db.refresh(db_workflow)
-
-    #     # Start workflow execution in background
-    #     await self.start_workflow(workflow_config)
-        
-    #     return db_workflow
 
     async def get_workflow_logs(self, apps_execution_id: int) -> schemas.WorkflowResponse:
         """Get logs for a specific workflow execution"""

@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings
 from functools import lru_cache
 
 class Settings(BaseSettings):
-    DATABASE_URL: str = "postgresql://postgres:postgres@127.0.0.1:5432/workflow_db?sslmode=disable"
+    DATABASE_URL: str = "postgresql://lramar@127.0.0.1:5432/workflow_db?sslmode=disable"
     OPENAI_API_KEY: str = ""
     
     class Config:

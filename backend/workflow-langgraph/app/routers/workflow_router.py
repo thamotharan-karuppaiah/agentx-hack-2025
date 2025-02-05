@@ -7,12 +7,16 @@ from ..services.workflow_service import WorkflowService
 
 router = APIRouter()
 
-@router.post("/workflows", response_model=schemas.WorkflowExecutionInDB)
+@router.get("")  # Add a test endpoint
+async def test_endpoint():
+    return {"message": "Workflow router is working"}
+
+@router.post("", response_model=schemas.WorkflowExecutionInDB)
 async def create_workflow(
     workflow: schemas.Workflow,
     db: Session = Depends(get_db)
 ):
-    """Create and start a new workflow execution"""
+    """Create and execute a new workflow"""
     workflow_service = WorkflowService(db)
     return await workflow_service.create_workflow(workflow)
 

@@ -1,20 +1,80 @@
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any, Union
 from datetime import datetime
+from enum import Enum
 
 # Define Position first since it's used by WorkflowNode
 class Position(BaseModel):
     x: float
     y: float
 
+class MessageType(str, Enum):
+    USER = "USER"
+    ASSISTANT = "ASSISTANT"
+
+class Message(BaseModel):
+    id: str
+    type: MessageType
+    content: str
+
+class Field(BaseModel):
+    id: str
+    type: str
+    label: str
+    variableName: str
+    hint: Optional[str] = None
+    placeholder: Optional[str] = None
+    required: bool = False
+
+class Group(BaseModel):
+    id: str
+    name: str
+    fields: List[Field]
+
+class StartNodeData(BaseModel):
+    name: str
+    title: str
+    groups: List[Group]
+
+class EndNodeData(BaseModel):
+    name: str
+    title: str
+    outputType: str
+
+class LLMNodeData(BaseModel):
+    title: str
+    name: str
+    systemPrompt: str
+    messages: List[Message]
+    errorBehavior: str = "continue"
+
+class APINodeData(BaseModel):
+    title: str
+    name: str
+    url: str
+    headers: Optional[str] = None
+    method: str
+    errorBehavior: str = "continue"
+
+class CodeNodeData(BaseModel):
+    title: str
+    name: str
+    language: str
+    code: str
+    functionPreview: str
+    annotations: List[Any] = []
+    errorBehavior: str = "continue"
+
+class HumanNodeData(BaseModel):
+    title: str
+    name: str
+    prompt: Optional[str] = None
+    errorBehavior: str = "continue"
+
 class NodeData(BaseModel):
     name: str
     title: str
-    language: Optional[str] = None
-    code: Optional[str] = None
-    functionPreview: Optional[str] = None
-    annotations: Optional[List] = []
-    outputType: Optional[str] = None
+    data: Optional[Union[StartNodeData, EndNodeData, LLMNodeData, APINodeData, CodeNodeData, HumanNodeData]] = None
 
 class WorkflowNode(BaseModel):
     id: str
@@ -27,6 +87,18 @@ class WorkflowNode(BaseModel):
     positionAbsolute: Position
     dragging: bool
     deletable: Optional[bool] = None
+
+class Edge(BaseModel):
+    id: str
+    source: str
+    target: str
+    sourceHandle: Optional[str] = None
+    targetHandle: Optional[str] = None
+    className: Optional[str] = None
+
+class WorkflowConfig(BaseModel):
+    nodes: List[Dict[str, Any]]
+    edges: List[Dict[str, Any]]
 
 class WorkflowStepBase(BaseModel):
     step_name: str
@@ -67,11 +139,14 @@ class WorkflowExecutionCreate(WorkflowExecutionBase):
 class WorkflowExecutionUpdate(WorkflowExecutionBase):
     pass
 
-class WorkflowExecutionInDB(WorkflowExecutionBase):
-    id: int
-    created_at: datetime
-    updated_at: datetime
-    steps: List[WorkflowStepInDB] = []
+class WorkflowExecutionInDB(BaseModel):
+    id: Optional[int] = None
+    apps_execution_id: str  # Changed from int to str to match MongoDB ID
+    status: str
+    error_message: Optional[str] = None
+    raw_execution_json: Optional[Dict] = None
+    created_at: Optional[datetime] = datetime.utcnow()
+    updated_at: Optional[datetime] = datetime.utcnow()
 
     class Config:
         from_attributes = True
@@ -119,39 +194,29 @@ class NodeItem(BaseModel):
     data: Union[EventNodeData, ConditionNodeData, ActionNodeData]
     additional_config: Dict = {}
 
-class Edge(BaseModel):
-    id: str
-    source: str
-    target: str
-    sourceHandle: Optional[str]
-    targetHandle: Optional[str]
-
-class WorkflowConfig(BaseModel):
-    nodes: List[WorkflowNode]
-    edges: List[Edge]
-
 class Workflow(BaseModel):
     id: str
-    name: str
-    description: str
-    createdBy: str
-    defaultVersion: int
-    totalVersions: int
-    status: str
-    workspaceId: str
-    public: bool
-    color: str
-    emoji: str
-    readme: str
-    deletedAt: Optional[str]
-    uuid: str
-    createdAt: datetime
-    updatedAt: datetime
+    _id: Optional[str] = None
+    name: Optional[str] = ""
+    description: Optional[str] = ""
+    createdBy: Optional[str] = None
+    defaultVersion: Optional[int] = 0
+    totalVersions: Optional[int] = 0
+    status: Optional[str] = "draft"
+    workspaceId: Optional[str] = None
+    public: Optional[bool] = False
+    color: Optional[str] = None
+    emoji: Optional[str] = None
+    readme: Optional[str] = None
+    deletedAt: Optional[datetime] = None
+    uuid: Optional[str] = None
+    createdAt: Optional[datetime] = None
+    updatedAt: Optional[datetime] = None
+    __v: Optional[int] = 0
     config: WorkflowConfig
-    defaultVersionId: str
-    active_version_number: int
-    folder_name: Optional[str]
-    type: str
+    active_version_number: Optional[int] = 0
+    folder_name: Optional[str] = None
+    type: Optional[str] = "Workflow"
 
 class WorkflowResponse(BaseModel):
     id: int

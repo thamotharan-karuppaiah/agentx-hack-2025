@@ -21,7 +21,11 @@ app.add_middleware(
 )
 
 # Include routers
-app.include_router(workflow_router.router, prefix="/api/v1", tags=["workflows"])
+app.include_router(
+    workflow_router.router, 
+    prefix="/workflows",  # Changed from "/api/v1"
+    tags=["workflows"]
+)
 
 @app.get("/")
 async def root():

@@ -1,93 +1,115 @@
-from typing import Dict, Any, List
-from langgraph.graph import StateGraph, END
+from typing import Dict, Any, Optional, List
+from langgraph.graph import StateGraph, END, START
 # from langgraph.checkpoint.postgres import PostgresSaver
 from langchain_core.messages import HumanMessage
 from psycopg import Connection
 from ..config import settings
-from .nodes.llm_node import LLMNode, MessageConfig, MessageType
+from .nodes.llm_node import LLMNode
+from .nodes.api_node import APINode
+from .nodes.code_node import CodeNode
+from .nodes.human_node import HumanNode
 import asyncio
 from langgraph.checkpoint.postgres import PostgresSaver
+from IPython.display import Image, display
+from pydantic import BaseModel
 
+class WorkflowState(BaseModel):
+    workflow_id: str
+    current_node: Optional[str] = None
+    output: dict = {}
+    error: Optional[str] = None
+    execution_log: List = []
 
 class WorkflowOrchestrator:
     def __init__(self):
-        # Connection configuration
+        # Connection configuration for checkpointing
         self.connection_kwargs = {
             "autocommit": True,
             "prepare_threshold": 0,
         }
         
-        # Create database connection and checkpointer
         self.conn = Connection.connect(
             settings.DATABASE_URL,
             **self.connection_kwargs
         )
         self.checkpoint = PostgresSaver(self.conn)
-        
-        # Setup checkpoint table if not exists
         self.checkpoint.setup()
-        
         self.nodes: Dict[str, Any] = {}
 
     async def __aenter__(self):
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        # Ensure connection is closed when done
         if hasattr(self, 'conn') and self.conn:
             self.conn.close()
 
     def create_node(self, node_config: Dict[str, Any]):
         """Create a node based on its type"""
         node_type = node_config.get("type")
+        node_data = node_config.get("data", {})
         
-        if node_type == "llm":
-            llm_node = LLMNode(node_config, settings.OPENAI_API_KEY)
-            async def llm_wrapper(state):
-                return await llm_node.process(state)
-            return llm_wrapper
-            
-        elif node_type == "input":
-            async def input_node(state):
-                return {"input": state.get("input", "")}
-            return input_node
-            
-        elif node_type == "output":
-            async def output_node(state):
-                return {"output": state.get("output", "")}
-            return output_node
-            
-        elif node_type == "human":
-            async def human_node(state):
-                # Store current state for human review
-                self.nodes["human"] = {
-                    "state": state,
-                    "completed": False
+        async def node_wrapper(state):
+            try:
+                if node_type == "start":
+                    input_data = {}
+                    for group in node_data.get("groups", []):
+                        for field in group.get("fields", []):
+                            input_data[field["variableName"]] = state.get(field["variableName"], "")
+                    return {"input": input_data, "node_output": input_data}
+
+                elif node_type == "end":
+                    return {"output": state, "node_output": state}
+
+                elif node_type == "llm":
+                    llm_node = LLMNode(node_config, settings.OPENAI_API_KEY)
+                    result = await llm_node.process(state)
+                    return {"node_output": result}
+
+                elif node_type == "api":
+                    api_node = APINode(node_config)
+                    result = await api_node.process(state)
+                    return {"node_output": result}
+
+                elif node_type == "code":
+                    code_node = CodeNode(node_config)
+                    result = await code_node.process(state)
+                    return {"node_output": result}
+
+                elif node_type == "human":
+                    human_node = HumanNode(node_config)
+                    self.nodes["human"] = human_node
+                    result = await human_node.process(state)
+                    return {"node_output": result}
+
+            except Exception as e:
+                return {
+                    "error": str(e),
+                    "node_id": node_config.get("id"),
+                    "node_type": node_type
                 }
-                # Wait for human input
-                while not self.nodes["human"].get("completed", False):
-                    await asyncio.sleep(1)
-                return self.nodes["human"]["state"]
-            return human_node
-            
-        else:
-            raise ValueError(f"Unknown node type: {node_type}")
+
+        return node_wrapper
 
     def build_graph(self, workflow_config: Dict[str, Any]) -> StateGraph:
         """Build a LangGraph workflow from config"""
-        # Create graph
-        graph = StateGraph()
-
+        # Initialize StateGraph with WorkflowState schema
+        graph = StateGraph(WorkflowState)
+        
         # Add nodes
-        for node_id, node_config in workflow_config["nodes"].items():
-            node = self.create_node(node_config)
-            self.nodes[node_id] = {
-                "config": node_config,
-                "instance": node
+        for node in workflow_config["nodes"]:
+            node_instance = self.create_node(node)
+            self.nodes[node["id"]] = {
+                "config": node,
+                "instance": node_instance
             }
-            graph.add_node(node_id, node)
+            graph.add_node(node["id"], node_instance)
 
-        # Add edges
+        # Add edges with START and END
+        # First, connect START to the start node
+        start_node = next(node["id"] for node in workflow_config["nodes"] if node["type"] == "start")
+        graph.add_edge(START, start_node)
+
+        # Add other edges
         for edge in workflow_config["edges"]:
             source = edge["source"]
             target = edge["target"]
@@ -97,23 +119,26 @@ class WorkflowOrchestrator:
             else:
                 graph.add_edge(source, target)
 
-        # Set entry point
-        graph.set_entry_point("input")
-
         return graph.compile()
 
-    async def start_workflow(self, workflow_id: int, workflow_config: Dict[str, Any]):
-        """Start a workflow execution"""
-        # Build graph
+    async def execute_workflow(self, workflow_id: int, workflow_config: Dict[str, Any], initial_inputs: Dict[str, Any] = None):
+        """Execute a workflow with optional initial inputs"""
         graph = self.build_graph(workflow_config)
+
+        print("\nWorkflow Graph Structure:")
+        print("------------------------")
+        print("Nodes:", [node for node in workflow_config["nodes"]])
+        print("Edges:", [edge for edge in workflow_config["edges"]])
         
-        # Create initial state and config
-        initial_state = {
-            "workflow_id": workflow_id,
-            "input": workflow_config.get("input", ""),
-            "output": "",
-            "error": None
-        }
+        # Create initial state using the WorkflowState model
+        initial_state = WorkflowState(
+            workflow_id=str(workflow_id),  # Convert to string as required by schema
+            current_node=None,
+            output={},
+            error=None,
+            execution_log=[],
+            **initial_inputs if initial_inputs else {}
+        ).model_dump()  # Convert to dict for graph execution
         
         config = {
             "configurable": {
@@ -121,32 +146,27 @@ class WorkflowOrchestrator:
             }
         }
         
+        execution_states = []
         try:
-            # Execute graph with checkpointing
-            async for state in graph.astream(
-                initial_state,
-                config=config,
-                checkpoint=self.checkpoint
-            ):
-                # State updates are automatically checkpointed
+            async for state in graph.astream(initial_state, config=config):
+                execution_states.append(state)
                 if state.get("error"):
-                    print(f"Error in workflow {workflow_id}: {state['error']}")
                     break
+            
+            return execution_states
                 
         except Exception as e:
-            # Handle any errors during execution
             print(f"Error executing workflow {workflow_id}: {str(e)}")
             raise
 
-    async def add_human_input(self, workflow_id: int, input_text: str):
+    async def add_human_input(self, workflow_id: int, input_text: str, output: Any = None):
         """Add human input to a paused workflow"""
         if "human" not in self.nodes:
             raise ValueError("No human node found in workflow")
             
         human_node = self.nodes["human"]
-        current_state = human_node["state"]
+        if isinstance(human_node, dict):
+            human_node = human_node["instance"]
         
-        # Add human input to state
-        current_state["input"] = input_text
-        human_node["state"] = current_state
-        human_node["completed"] = True 
+        # Add human input and optional output to continue the workflow
+        human_node.add_human_input(input_text, output) 

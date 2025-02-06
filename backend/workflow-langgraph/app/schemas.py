@@ -218,9 +218,40 @@ class Workflow(BaseModel):
     folder_name: Optional[str] = None
     type: Optional[str] = "Workflow"
 
+class WorkflowExecutionStreamBase(BaseModel):
+    node_name: str
+    stream_type: str
+    content: Dict[str, Any]
+
+class WorkflowExecutionStreamCreate(WorkflowExecutionStreamBase):
+    execution_id: int
+
+class WorkflowExecutionStreamInDB(WorkflowExecutionStreamBase):
+    id: int
+    execution_id: int
+    timestamp: datetime
+
+    class Config:
+        from_attributes = True
+
 class WorkflowResponse(BaseModel):
     id: int
     apps_execution_id: int
     created_at: datetime
     updated_at: datetime
-    data: List[Dict[str, Any]] 
+    data: List[Dict[str, Any]]
+    streams: List[Dict[str, Any]] = []
+
+    class Config:
+        from_attributes = True
+
+class WorkflowExecutionRead(BaseModel):
+    id: int
+    status: str
+    error_message: Optional[str] = None
+    raw_execution_json: Optional[Dict[str, Any]] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True 

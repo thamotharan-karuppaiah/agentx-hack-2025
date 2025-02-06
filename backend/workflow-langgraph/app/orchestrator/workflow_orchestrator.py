@@ -1,6 +1,6 @@
 from typing import Dict, Any, Optional, List
 from langgraph.graph import StateGraph, END, START
-# from langgraph.checkpoint.postgres import PostgresSaver
+from langgraph.checkpoint.postgres import PostgresSaver
 from langchain_core.messages import HumanMessage
 from psycopg import Connection
 from ..config import settings
@@ -9,9 +9,18 @@ from .nodes.api_node import APINode
 from .nodes.code_node import CodeNode
 from .nodes.human_node import HumanNode
 import asyncio
-from langgraph.checkpoint.postgres import PostgresSaver
 from IPython.display import Image, display
 from pydantic import BaseModel
+from ..models import WorkflowExecutionStream
+from sqlalchemy.orm import Session
+from datetime import datetime
+import json
+
+class DateTimeEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        return super().default(obj)
 
 class WorkflowState(BaseModel):
     workflow_id: str
@@ -22,6 +31,7 @@ class WorkflowState(BaseModel):
     node_inputs: Dict[str, Any] = {}  # Store inputs for each node
     node_outputs: Dict[str, Any] = {}  # Store outputs for each node
     message_history: Dict[str, List[Dict[str, Any]]] = {}  # Store message history for each node
+    execution_id: Optional[int] = None  # Add execution_id to track streams
 
     class Config:
         arbitrary_types_allowed = True
@@ -35,11 +45,12 @@ class WorkflowState(BaseModel):
             "execution_log": self.execution_log,
             "node_inputs": self.node_inputs,
             "node_outputs": self.node_outputs,
-            "message_history": self.message_history
+            "message_history": self.message_history,
+            "execution_id": self.execution_id
         }
 
 class WorkflowOrchestrator:
-    def __init__(self):
+    def __init__(self, db: Optional[Session] = None):
         # Connection configuration for checkpointing
         self.connection_kwargs = {
             "autocommit": True,
@@ -54,6 +65,11 @@ class WorkflowOrchestrator:
         self.checkpoint.setup()
         self.nodes: Dict[str, Any] = {}
         self.graph = None
+        self.db = db
+
+    def _serialize_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Serialize data to handle datetime objects"""
+        return json.loads(json.dumps(data, cls=DateTimeEncoder))
 
     async def __aenter__(self):
         return self
@@ -62,7 +78,29 @@ class WorkflowOrchestrator:
         if hasattr(self, 'conn') and self.conn:
             self.conn.close()
 
-    def create_node(self, node_config: Dict[str, Any]):
+    async def _save_stream(self, execution_id: int, node_name: str, stream_type: str, content: Dict[str, Any]):
+        """Save streaming data to database"""
+        if self.db:
+            try:
+                # Serialize the content before saving
+                serialized_content = self._serialize_data(content)
+                
+                stream = WorkflowExecutionStream(
+                    execution_id=execution_id,
+                    node_name=node_name,
+                    stream_type=stream_type,
+                    content=serialized_content,
+                    timestamp=datetime.utcnow()
+                )
+                self.db.add(stream)
+                self.db.commit()
+                print(f"Saved stream for execution {execution_id}, node {node_name}, type {stream_type}")
+            except Exception as e:
+                print(f"Error saving stream: {str(e)}")
+                self.db.rollback()
+                raise
+
+    async def create_node(self, node_config: Dict[str, Any]):
         """Create a node based on its type"""
         node_type = node_config.get("type")
         node_name = node_config.get("name")  # Prioritize name over id
@@ -72,9 +110,9 @@ class WorkflowOrchestrator:
         node_config["name"] = node_name or node_id
         
         if node_type == "start":
-            return self._create_start_node(node_config)
+            return await self._create_start_node(node_config)
         elif node_type == "end":
-            return self._create_end_node(node_config)
+            return await self._create_end_node(node_config)
         elif node_type == "llm":
             llm_node = LLMNode(node_config)
             self.nodes[node_config["name"]] = llm_node
@@ -94,81 +132,87 @@ class WorkflowOrchestrator:
         else:
             raise ValueError(f"Unknown node type: {node_type}")
 
-    def _create_start_node(self, node_config: Dict[str, Any]):
+    async def _create_start_node(self, node_config: Dict[str, Any]):
         """Create a start node"""
         node_data = node_config.get("data", {})
         node_id = node_config.get("name", "start")
 
         class StartNode:
-            def __init__(self, node_id: str, node_data: Dict[str, Any]):
+            def __init__(self, node_id: str, node_data: Dict[str, Any], orchestrator: 'WorkflowOrchestrator'):
                 self.node_id = node_id
-                self.node_name = node_id  # Using node_id as name since it's already using the name
+                self.node_name = node_id
                 self.node_data = node_data
+                self.orchestrator = orchestrator
 
-            async def process(self, state: Dict[str, Any]) -> Dict[str, Any]:
+            async def process(self, state: WorkflowState) -> WorkflowState:
                 input_data = {}
                 
                 # First try to get values from node_inputs
-                if state.get("node_inputs"):
-                    input_data.update(state["node_inputs"])
+                if state.node_inputs:
+                    input_data.update(state.node_inputs)
                 
                 # If we still don't have values, try to get them from the state directly
                 if not any(input_data.values()):
                     for group in self.node_data.get("groups", []):
                         for field in group.get("fields", []):
                             var_name = field["variableName"]
-                            if var_name in state:
-                                input_data[var_name] = state[var_name]
+                            if hasattr(state, var_name):
+                                input_data[var_name] = getattr(state, var_name)
                 
-                # Update the state's node_inputs with our input data
-                if "node_inputs" not in state:
-                    state["node_inputs"] = {}
-                state["node_inputs"].update(input_data)
+                # Save stream data
+                if state.execution_id:
+                    await self.orchestrator._save_stream(
+                        state.execution_id,
+                        self.node_name,
+                        "input",
+                        input_data
+                    )
                 
-                return {
-                    f"{self.node_name}.input": input_data,
-                    f"{self.node_name}.output": input_data,
-                    "node_output": input_data  # Add this to make sure output is captured
-                }
+                # Update state
+                state.node_inputs[self.node_name] = input_data
+                state.node_outputs[self.node_name] = input_data
+                state.current_node = self.node_name
+                
+                return state
 
-        return StartNode(node_id, node_data)
+        return StartNode(node_id, node_data, self)
 
-    def _create_end_node(self, node_config: Dict[str, Any]):
+    async def _create_end_node(self, node_config: Dict[str, Any]):
         """Create an end node"""
         node_id = node_config.get("name", "end")
 
         class EndNode:
-            def __init__(self, node_id: str):
+            def __init__(self, node_id: str, orchestrator: 'WorkflowOrchestrator'):
                 self.node_id = node_id
-                self.node_name = node_id  # Using node_id as name since it's already using the name
+                self.node_name = node_id
+                self.orchestrator = orchestrator
 
-            async def process(self, state: Dict[str, Any]) -> Dict[str, Any]:
+            async def process(self, state: WorkflowState) -> WorkflowState:
                 # Get all inputs and outputs
-                node_outputs = state.get("node_outputs", {})
-                node_inputs = state.get("node_inputs", {})
-                
-                # Start with all inputs
                 final_output = {}
-                final_output.update(node_inputs)
+                final_output.update(state.node_inputs)
                 
                 # Add outputs from all previous nodes
-                for node_name, output in node_outputs.items():
+                for node_name, output in state.node_outputs.items():
                     if node_name.lower() != "end":
-                        if isinstance(output, dict):
-                            # Handle different output formats
-                            if f"{node_name}.output" in output:
-                                final_output.update(output[f"{node_name}.output"])
-                            elif "node_output" in output:
-                                final_output.update(output["node_output"])
-                            else:
-                                final_output.update(output)
+                        final_output[node_name] = output
                 
-                return {
-                    f"{self.node_name}.output": final_output,
-                    "final_state": final_output
-                }
+                # Save stream data
+                if state.execution_id:
+                    await self.orchestrator._save_stream(
+                        state.execution_id,
+                        self.node_name,
+                        "output",
+                        final_output
+                    )
+                
+                # Update state
+                state.output = final_output
+                state.current_node = self.node_name
+                
+                return state
 
-        return EndNode(node_id)
+        return EndNode(node_id, self)
 
     async def create_workflow_graph(self, workflow_config: Dict[str, Any]) -> StateGraph:
         """Create a LangGraph workflow from config"""
@@ -185,7 +229,7 @@ class WorkflowOrchestrator:
         for node_config in workflow_config["nodes"]:
             node_id = node_config["id"]
             node_name = node_config.get("name", node_id)  # Get node name, fallback to id if not present
-            node_instance = self.create_node(node_config)
+            node_instance = await self.create_node(node_config)
             
             # Create the node function that will be called by the graph
             async def create_node_fn(node, node_name):
@@ -252,80 +296,82 @@ class WorkflowOrchestrator:
             else:
                 graph.add_edge(source_name, target_name)
 
-        self.graph = graph.compile()
-        return self.graph
+        # Compile the graph and return it
+        return graph.compile()
 
-    async def initialize_workflow_state(self, workflow_id: int, initial_inputs: Dict[str, Any] = None) -> WorkflowState:
-        """Initialize the workflow state with the given inputs"""
-        # Create initial state using the WorkflowState model
-        initial_state = WorkflowState(
+    async def initialize_workflow_state(self, workflow_id: int, execution_id: int, initial_inputs: Dict[str, Any] = None) -> WorkflowState:
+        """Initialize workflow state with execution ID"""
+        state = WorkflowState(
             workflow_id=str(workflow_id),
-            current_node=None,
-            output=initial_inputs if initial_inputs else {},
-            error=None,
-            execution_log=[],
-            node_inputs=initial_inputs if initial_inputs else {},
-            node_outputs={},
-            message_history={},
+            execution_id=execution_id
         )
-        
-        return initial_state
+        if initial_inputs:
+            state.node_inputs = initial_inputs
+        return state
 
-    async def execute_workflow(self, workflow_id: int, workflow_config: Dict[str, Any], initial_inputs: Dict[str, Any] = None):
-        """Execute a workflow with optional initial inputs"""
+    async def execute_workflow(self, workflow_id: int, workflow_config: Dict[str, Any], execution_id: int, initial_inputs: Dict[str, Any] = None):
+        """Execute a workflow with streaming support"""
         try:
-            # Step 1: Create the workflow graph if not already created
-            if not self.graph:
-                self.graph = await self.create_workflow_graph(workflow_config)
-
-            print("\nCompiled Graph Structure:")
-            print("------------------------")
-            for node_name, node_spec in self.graph.nodes.items():
-                print(f"Node: {node_name}")
-                print(f"  Type: {type(node_spec).__name__}")
-                print("------------------------")
-
-            # Print the edges
-            print("Edges:")
-            for source, target in self.graph.builder._all_edges:
-                print(f"  {source} -> {target}")
-            print("------------------------")
-
-            try:
-                # Get the graph visualization
-                display(Image(self.graph.get_graph(xray=1).draw_mermaid_png()))
-            except Exception as e:
-                print(f"Note: Could not generate workflow visualization: {str(e)}")
-
-            print("\nWorkflow Graph Structure:")
-            print("------------------------")
-            print("Nodes:", [node for node in workflow_config["nodes"]])
-            print("Edges:", [edge for edge in workflow_config["edges"]])
+            # Create the workflow graph
+            graph = await self.create_workflow_graph(workflow_config)
             
-            # Step 2: Initialize the workflow state
-            initial_state = await self.initialize_workflow_state(workflow_id, initial_inputs)
+            # Initialize workflow state
+            initial_state = await self.initialize_workflow_state(workflow_id, execution_id, initial_inputs)
             
-            print("\nInitial State:")
-            print(initial_state)
-            
+            # Configure graph execution
             config = {
-                "configurable": {
-                    "workflow_id": str(workflow_id)
+                "recursion_limit": 25,  # Prevent infinite loops
+                "checkpoint": self.checkpoint,
+                "metadata": {
+                    "workflow_id": workflow_id,
+                    "execution_id": execution_id
                 }
             }
             
-            # Step 3: Execute the workflow
-            execution_states = []
-            result = await self.graph.ainvoke(initial_state, config=config)
-
-
-            print("\nResult:")
-            print(result)
-            return execution_states
+            # Stream execution events with version parameter
+            stream = graph.astream_events(
+                initial_state,
+                config=config,
+                version="v1"  # Add version parameter
+            )
+            
+            final_output = None
+            async for event in stream:
+                # Handle streaming event
+                await self._handle_stream(event)
                 
+                # Update final output if this is the last event
+                if event.get("type") == "end":
+                    final_output = event.get("data", {}).get("output", {})
+            
+            return final_output
+
         except Exception as e:
-            print(f"Error executing workflow {workflow_id}: {str(e)}")
+            print(f"Error executing workflow: {str(e)}")
             raise
+
+    async def _handle_stream(self, event: Dict[str, Any]):
+        """Handle streaming events from the graph"""
+        if not isinstance(event, dict):
+            return
+            
+        state = event.get("state")
+        if not state or not isinstance(state, WorkflowState):
+            return
+            
+        execution_id = state.execution_id
+        if not execution_id:
+            return
+            
+        # Save stream data
+        node_name = state.current_node or "unknown"
+        stream_type = event.get("type", "output")
+        content = {
+            "state": state.model_dump(),
+            "event": self._serialize_data(event)
+        }
+        
+        await self._save_stream(execution_id, node_name, stream_type, content)
 
     async def add_human_input(self, workflow_id: int, input_text: str, output: Any = None):
         """Add human input to a paused workflow"""

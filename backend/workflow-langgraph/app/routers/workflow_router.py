@@ -1,60 +1,216 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from ..database import get_db
 from .. import schemas, models
 from ..services.workflow_service import WorkflowService
 import json
+from datetime import datetime
+from fastapi import BackgroundTasks
 
 router = APIRouter()
 
-@router.get("")  # Add a test endpoint
+@router.get("/test")  # Move test endpoint to /test
 async def test_endpoint():
     return {"message": "Workflow router is working"}
 
-@router.post("", response_model=schemas.WorkflowExecutionInDB)
+@router.post("")  # Root POST endpoint for workflow creation
 async def create_workflow(
     workflow: schemas.Workflow,
-    initial_inputs: Dict[str, Any] = None,
-    db: Session = Depends(get_db)
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    initial_inputs: Dict[str, Any] = None
 ):
     """Create and execute a new workflow"""
     workflow_service = WorkflowService(db)
-    
-    # Step 1: Create the workflow execution record
-    workflow_execution = await workflow_service.create_workflow(workflow, initial_inputs)
-    
-    # Step 2: Execute the workflow
-    return await workflow_service.execute_workflow(workflow_execution, workflow, initial_inputs)
+    try:
+        # Step 1: Create the workflow execution record
+        workflow_execution = await workflow_service.create_workflow(workflow, initial_inputs)
+        print(f"Created workflow execution with ID: {workflow_execution.id}")
+        
+        # Step 2: Start workflow execution in background
+        # Create a new service instance for background task to ensure proper DB session
+        background_service = WorkflowService(db)
+        background_tasks.add_task(
+            background_service.execute_workflow,
+            workflow_execution,
+            workflow,
+            initial_inputs
+        )
+        print(f"Added workflow execution to background tasks")
+        
+        # Return immediately with execution ID and initial status
+        return {
+            "execution_id": workflow_execution.id,
+            "status": "CREATED",
+            "message": "Workflow execution started",
+            "links": {
+                "status": f"/executions/{workflow_execution.id}",
+                "streams": f"/executions/{workflow_execution.id}/streams"
+            }
+        }
+    except Exception as e:
+        print(f"Error creating workflow: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/{workflow_id}/execute", response_model=schemas.WorkflowExecutionInDB)
-async def execute_workflow(
-    workflow_id: int,
-    initial_inputs: Dict[str, Any] = None,
+@router.get("/executions")
+async def list_executions(
+    status: Optional[str] = Query(None, description="Filter by status (CREATED, RUNNING, COMPLETED, ERROR)"),
+    limit: int = Query(10, description="Number of executions to return"),
+    offset: int = Query(0, description="Number of executions to skip"),
     db: Session = Depends(get_db)
 ):
-    """Execute an existing workflow"""
+    """List all workflow executions with optional filtering"""
     workflow_service = WorkflowService(db)
-    
-    # Get the existing workflow execution
-    workflow_execution = db.query(models.WorkflowExecution).filter(
-        models.WorkflowExecution.apps_execution_id == str(workflow_id)
-    ).first()
-    
-    if not workflow_execution:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Workflow execution {workflow_id} not found"
-        )
-    
-    # Get the workflow configuration
-    workflow = schemas.Workflow(
-        id=workflow_id,
-        config=json.loads(workflow_execution.raw_execution_json)
-    )
-    
-    # Execute the workflow
-    return await workflow_service.execute_workflow(workflow_execution, workflow, initial_inputs)
+    executions = await workflow_service.list_executions(status=status, limit=limit, offset=offset)
+    return [
+        {
+            "execution_id": execution.id,
+            "apps_execution_id": execution.apps_execution_id,
+            "status": execution.status,
+            "created_at": execution.created_at,
+            "updated_at": execution.updated_at
+        }
+        for execution in executions
+    ]
+
+@router.get("/executions/{execution_id}")
+async def get_workflow_execution(
+    execution_id: int,
+    include_streams: bool = Query(False, description="Include streaming data in response"),
+    db: Session = Depends(get_db)
+):
+    """Get detailed workflow execution status and results"""
+    workflow_service = WorkflowService(db)
+    try:
+        execution = await workflow_service.get_execution(execution_id)
+        if not execution:
+            raise HTTPException(status_code=404, detail=f"Execution {execution_id} not found")
+
+        # Get steps and streams
+        logs = await workflow_service.get_workflow_logs(execution_id)
+        
+        # Calculate execution progress
+        total_steps = len(logs.data) if logs.data else 0
+        completed_steps = len([step for step in logs.data if step.get("finished")]) if logs.data else 0
+        current_step = next((step["name"] for step in reversed(logs.data) if not step.get("finished")), None) if logs.data else None
+        has_errors = any(step.get("error") for step in logs.data) if logs.data else False
+
+        response = {
+            "execution_id": execution.id,
+            "status": execution.status,
+            "created_at": execution.created_at,
+            "updated_at": execution.updated_at,
+            "execution_progress": {
+                "total_steps": total_steps,
+                "completed_steps": completed_steps,
+                "current_step": current_step,
+                "percentage": (completed_steps / total_steps * 100) if total_steps > 0 else 0,
+                "has_errors": has_errors
+            },
+            "steps": [{
+                "name": step["name"],
+                "status": "COMPLETED" if step.get("finished") else "RUNNING" if step["name"] == current_step else "PENDING",
+                "error": step.get("error"),
+                "start_time": step.get("start_time"),
+                "end_time": step.get("end_time"),
+                "duration": (step["end_time"] - step["start_time"]).total_seconds() if step.get("end_time") and step.get("start_time") else None,
+                "input": step.get("input"),
+                "output": step.get("output") if step.get("finished") else None,
+                "logs": step.get("logs", []),
+                "traces": step.get("traces", []),
+                "messages": step.get("messages", []),
+                "tools": step.get("tools", [])
+            } for step in logs.data] if logs.data else []
+        }
+
+        if include_streams:
+            # Group streams by node and type for better organization
+            streams_by_node = {}
+            for stream in logs.streams:
+                node_name = stream["node_name"]
+                if node_name not in streams_by_node:
+                    streams_by_node[node_name] = {
+                        "node_name": node_name,
+                        "messages": [],
+                        "tools": [],
+                        "other": []
+                    }
+                
+                content = stream["content"]
+                if isinstance(content, dict):
+                    if content.get("type") in ["human_message", "ai_message", "system_message"]:
+                        streams_by_node[node_name]["messages"].append({
+                            "type": content["type"],
+                            "content": content.get("content"),
+                            "timestamp": stream["timestamp"],
+                            "metadata": content.get("metadata", {})
+                        })
+                    elif content.get("type") == "tool_call":
+                        streams_by_node[node_name]["tools"].append({
+                            "tool_name": content.get("tool_name"),
+                            "inputs": content.get("inputs"),
+                            "outputs": content.get("outputs"),
+                            "timestamp": stream["timestamp"],
+                            "status": content.get("status"),
+                            "error": content.get("error")
+                        })
+                    else:
+                        streams_by_node[node_name]["other"].append({
+                            "type": stream["stream_type"],
+                            "content": content,
+                            "timestamp": stream["timestamp"]
+                        })
+                else:
+                    streams_by_node[node_name]["other"].append({
+                        "type": stream["stream_type"],
+                        "content": content,
+                        "timestamp": stream["timestamp"]
+                    })
+            
+            response["streams"] = list(streams_by_node.values())
+
+        return response
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/executions/{execution_id}/streams")
+async def get_workflow_streams(
+    execution_id: int,
+    node_name: Optional[str] = Query(None, description="Filter streams by node name"),
+    stream_type: Optional[str] = Query(None, description="Filter streams by type (input, output, error)"),
+    db: Session = Depends(get_db)
+):
+    """Get streaming data for a workflow execution with optional filtering"""
+    workflow_service = WorkflowService(db)
+    try:
+        # First check if execution exists
+        execution = await workflow_service.get_execution(execution_id)
+        if not execution:
+            raise HTTPException(status_code=404, detail=f"Execution {execution_id} not found")
+
+        # Then get streams
+        result = await workflow_service.get_workflow_logs(execution_id)
+        streams = result.streams
+        
+        # Apply filters if provided
+        if node_name:
+            streams = [s for s in streams if s["node_name"] == node_name]
+        if stream_type:
+            streams = [s for s in streams if s["stream_type"] == stream_type]
+            
+        return {
+            "execution_id": execution.id,
+            "status": execution.status,
+            "total_streams": len(streams),
+            "streams": streams
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/workflows/{apps_execution_id}/logs", response_model=schemas.WorkflowResponse)
 async def get_workflow_logs(

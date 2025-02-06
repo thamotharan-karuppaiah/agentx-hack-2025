@@ -4,7 +4,7 @@ import { agentService } from '@/services/agentService';
 import { useToast } from '@/hooks/use-toast';
 import type { Agent } from './types';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Plus, Settings, Filter, Search, ArrowLeft, Share, InfoIcon, MoreHorizontal, Menu, BotIcon } from 'lucide-react';
+import { Plus, Filter, Search, ArrowLeft, BotIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
@@ -12,10 +12,26 @@ import { agentExecutionService, type AgentExecution } from '@/services/agentExec
 import { Input } from '@/components/ui/input';
 import { formatDistanceToNow } from 'date-fns';
 import { CreateAgentModal } from './components/CreateAgentModal';
-import { ChatInput } from './components/ChatInput';
-import { ChatHistory } from './components/ChatHistory';
-import { PropertyPane } from './components/PropertyPane';
-import { EmptyState } from './components/EmptyState';
+import { QueueDetailsView } from './components/QueueDetailsView';
+import { TaskDetails } from './components/TaskDetails';
+import { QueueItemDetails } from './components/QueueItemDetails';
+
+interface QueueStatus {
+  active: number;
+  queued: number;
+}
+
+interface QueueItem {
+  name: string;
+  status: 'active';
+  queueCount: number;
+}
+
+interface QueueGroup {
+  name: string;
+  status: 'active' | 'finished';
+  items: QueueItem[];
+}
 
 export default function AgentDetails() {
   const { agentId } = useParams();
@@ -28,6 +44,10 @@ export default function AgentDetails() {
   const [searchQuery, setSearchQuery] = useState('');
   const [editModalOpen, setEditModalOpen] = useState(false);
   const selectedExec = executions.find(e => e.id === selectedExecution) || null;
+  const [queueStatus, setQueueStatus] = useState<QueueStatus>({ active: 1, queued: 0 });
+  const [showQueueDetails, setShowQueueDetails] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
+  const [selectedQueue, setSelectedQueue] = useState<QueueItem | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -94,6 +114,22 @@ export default function AgentDetails() {
     }
   };
 
+  const handleTaskClick = (executionId: string) => {
+    setSelectedExecution(executionId);
+    setSelectedQueue(null);
+  };
+
+  const handleQueueItemClick = (item: QueueItem, groupName: string) => {
+    setSelectedQueue(item);
+    setSelectedExecution(null);
+  };
+
+  const handleExecutionUpdate = (updatedExecution: AgentExecution) => {
+    setExecutions(prev => prev.map(exec => 
+      exec.id === updatedExecution.id ? updatedExecution : exec
+    ));
+  };
+
   if (loading) {
     return (
       <div className="space-y-4 p-6">
@@ -115,9 +151,9 @@ export default function AgentDetails() {
     <div className="flex h-full ignore-layout-padding bg-background-secondary">
       {/* Left Sidebar */}
       <aside className="relative flex flex-col bg-background-secondary h-full overflow-hidden w-[300px] shrink-0">
-        <div className="p-4 gap-4 flex flex-col bg-background-secondary w-full">
-          {/* Header */}
-          <div className="flex items-center justify-between gap-2">
+        {/* Fixed Header */}
+        <div className="p-4 bg-background-secondary w-full">
+          <div className="flex items-center justify-between gap-2 mb-4">
             <Link to="../agents" className="hover:bg-accent p-1 rounded">
               <ArrowLeft className="h-4 w-4" />
             </Link>
@@ -133,7 +169,11 @@ export default function AgentDetails() {
               <Button variant="ghost" size="icon">
                 <Filter className="h-4 w-4" />
               </Button>
-              <Button variant="ghost" size="icon">
+              <Button 
+                variant="ghost" 
+                size="icon"
+                onClick={() => setShowSearch(!showSearch)}
+              >
                 <Search className="h-4 w-4" />
               </Button>
               <Button variant="ghost" size="icon" onClick={handleCreateTask}>
@@ -142,164 +182,172 @@ export default function AgentDetails() {
             </div>
           </div>
 
-          {/* Search */}
-          <div className="relative">
-            <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search for task..."
-              className="pl-9"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+          {/* Toggleable Search */}
+          <div className={cn(
+            "transition-all duration-200 overflow-hidden",
+            showSearch ? "h-10 opacity-100 mb-4" : "h-0 opacity-0"
+          )}>
+            <div className="relative">
+              <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search for task..."
+                className="pl-9"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+          </div>
+
+          {/* Queue Status */}
+          <div 
+            className={cn(
+              "transition-all duration-300",
+              showQueueDetails 
+                ? "h-0 opacity-0 overflow-hidden" 
+                : "h-auto opacity-100"
+            )}
+          >
+            <div 
+              onClick={() => setShowQueueDetails(true)}
+              className="px-4 py-3 border border-b bg-white/50 rounded-md cursor-pointer hover:bg-accent/50 transition-colors group"
+            >
+              <div className="flex flex-col gap-1">
+                <h3 className="text-sm font-medium group-hover:text-primary transition-colors">
+                  View agent queues
+                </h3>
+                <div className="flex items-center gap-2 text-sm">
+                  <div className="flex items-center gap-1.5">
+                    <div className="status-dot"></div>
+                    <span className="text-green-700">
+                      {agent.integrations?.length} active
+                    </span>
+                  </div>
+                  <span className="text-muted-foreground">•</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-muted-foreground">{queueStatus.queued} in queue</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Sliding Content Area */}
+        <div className="flex-1 relative">
+          {/* Tasks List View */}
+          <div 
+            className={cn(
+              "absolute inset-0 flex flex-col transition-transform duration-300 ease-in-out",
+              showQueueDetails ? "-translate-x-full" : "translate-x-0"
+            )}
+          >
+            <ScrollArea className="flex-1">
+              <div className="p-4">
+                <div className="space-y-4">
+                  {/* Section Header */}
+                  <div className="flex items-center justify-between px-1">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm font-semibold text-foreground">Tasks</h3>
+                      <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
+                        {filteredExecutions.length}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        className="text-xs text-muted-foreground hover:text-foreground"
+                        onClick={handleCreateTask}
+                      >
+                        New Task
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Tasks List */}
+                  {filteredExecutions.length > 0 ? (
+                    <div className="space-y-1">
+                      {filteredExecutions.map(execution => (
+                        <button
+                          key={execution.id}
+                          className={cn(
+                            "w-full text-left p-3 rounded-md transition-colors",
+                            "hover:bg-accent/30 hover:border-border-hover",
+                            "border border-transparent",
+                            selectedExecution === execution.id 
+                              ? "bg-accent/40 border-border-hover shadow-sm" 
+                              : "bg-transparent"
+                          )}
+                          onClick={() => handleTaskClick(execution.id)}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className={cn(
+                              "text-sm truncate",
+                              selectedExecution === execution.id 
+                                ? "text-foreground font-medium" 
+                                : "text-muted-foreground"
+                            )}>
+                              {execution.title}
+                            </span>
+                            <div className="shrink-0 text-right">
+                              <span className="text-xs text-muted-foreground">
+                                {formatDistanceToNow(new Date(execution.createdAt), { addSuffix: true })}
+                              </span>
+                            </div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center py-8">
+                      <div className="w-16 h-16 mb-4">
+                        <img 
+                          src="/clipboard.svg" 
+                          alt="No tasks" 
+                          className="w-full h-full opacity-50"
+                        />
+                      </div>
+                      <p className="text-center text-muted-foreground text-sm">
+                        Your agent's tasks will show up here.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </ScrollArea>
+          </div>
+
+          {/* Queue Details View */}
+          <div 
+            className={cn(
+              "absolute inset-0 flex flex-col transition-transform duration-300 ease-in-out",
+              showQueueDetails ? "translate-x-0" : "translate-x-full"
+            )}
+          >
+            <QueueDetailsView 
+              onBack={() => setShowQueueDetails(false)} 
+              onItemClick={handleQueueItemClick}
+              agent={agent}
             />
           </div>
         </div>
-
-        {/* Tasks List */}
-        <ScrollArea className="flex-1">
-          <div className="p-4">
-            <div className="space-y-4">
-              {filteredExecutions.length > 0 ? (
-                <div className="space-y-1">
-                  {filteredExecutions.map(execution => (
-                    <button
-                      key={execution.id}
-                      className={cn(
-                        "w-full text-left p-3 rounded-sm hover:bg-accent/50 group",
-                        selectedExecution === execution.id && "bg-accent"
-                      )}
-                      onClick={() => setSelectedExecution(execution.id)}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm truncate">{execution.title}</span>
-                        <div className="shrink-0 text-right">
-                          <span className="text-xs text-muted-foreground">
-                            {formatDistanceToNow(new Date(execution.createdAt), { addSuffix: true })}
-                          </span>
-                        </div>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center py-8">
-                  <div className="w-16 h-16 mb-4">
-                    <img 
-                      src="/clipboard.svg" 
-                      alt="No tasks" 
-                      className="w-full h-full opacity-50"
-                    />
-                  </div>
-                  <p className="text-center text-muted-foreground text-sm">
-                    Your agent's tasks will show up here.
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-        </ScrollArea>
       </aside>
 
       {/* Main Content */}
-      <div className="flex flex-col justify-start w-full h-full bg-background-secondary">
-        {/* Header */}
-        <header className="w-[calc(100%-8px)] mt-2 px-2 xl:px-0 bg-white">
-          <div className="w-full min-h-0 h-[48px] flex items-center px-4 md:px-6 lg:px-8 bg-background-primary border border-border-default rounded-t-sm">
-            <div className="block xl:hidden mr-2">
-              <Button variant="ghost" size="icon">
-                <Menu className="h-4 w-4" />
-              </Button>
-            </div>
-
-            {/* Breadcrumb */}
-            <div className="group/title flex items-center justify-center space-x-2 shrink truncate">
-              <div className="flex items-center h-full">
-                <div className="rounded-sm aspect-square shrink-0 flex items-center justify-center overflow-hidden bg-background-primary bg-cover h-6 w-6 mr-2">
-                  <BotIcon className="h-4 w-4" />
-                </div>
-                <span className="text-muted-foreground truncate shrink transition-colors">
-                  {agent?.name}
-                </span>
-              </div>
-              <span className="text-muted-foreground">/</span>
-              <span className="text-muted-foreground truncate max-w-xs lg:max-w-sm">
-                {selectedExec?.title || 'New Task'}
-              </span>
-            </div>
-
-            {/* Actions */}
-            <div className="flex items-center justify-end space-x-1 ml-auto shrink-0">
-              <Button variant="ghost" className="hidden md:flex">
-                <Share className="h-4 w-4 mr-2" />
-                Share
-              </Button>
-              <Button variant="ghost" size="icon" className="hidden md:flex">
-                <InfoIcon className="h-4 w-4" />
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => setEditModalOpen(true)}
-              >
-                <Settings className="h-4 w-4 mr-2" />
-              </Button>
-              <Button variant="ghost" size="icon">
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-        </header>
-
-        {/* Main Content Area */}
-        <div className="w-full flex flex-1 min-h-0 xl:pl-0 pr-2 pt-0 bg-white">
-          {/* Center Content */}
-          <div className="flex-grow h-full flex flex-col elevation-raw-bulge bg-background-primary relative xl:rounded-r-none border border-t-0 border-border-default">
-            <div className="h-full overflow-y-auto flex-grow flex flex-col px-m py-m 2xl:py-xl items-center hide-scroll-bar" id="scroll-container">
-              {selectedExec ? (
-                <ChatHistory execution={selectedExec} />
-              ) : (
-                agent && <EmptyState agent={agent} />
-              )}
-              <div className="sticky z-40 w-full px-xxs py-m bg-gradient-to-t from-white via-white via-90% to-transparent -bottom-xl">
-                <div className="relative">
-                  <ChatInput onSubmit={() => { }} />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Right Properties Panel */}
-          <div
-            className="w-[380px] h-full shrink-0 hidden xl:block elevation-raw-bulge border border-border-default border-l-0 border-t-0 bg-background-primary overflow-y-auto">
-            <PropertyPane execution={selectedExec} agent={agent} />
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="mb-2 pr-2 w-full bg-white">
-          <footer className="w-full flex items-center justify-center border border-t-0 rounded-b-sm border-border-default bg-background-primary h-[33px]">
-            {/* <button className="flex items-center px-6 py-2 rounded-bl-sm border-r border-border-default transition-colors bg-background-tertiary hover:bg-background-secondary">
-              <span className="text-muted-foreground text-sm">Override Mode</span>
-              <span className="text-muted-foreground text-sm ml-1">OFF</span>
-            </button>
-             */}
-            <div className="hidden lg:inline-flex">
-              <span className="text-muted-foreground text-sm">
-                Last updated {formatDistanceToNow(new Date(agent?.lastModified || agent?.created), { addSuffix: true })}
-              </span>
-            </div>
-
-            {/* <div className="border-l border-border-default divide-x divide-border-default flex h-full">
-              <button className="px-6 py-2 flex items-center space-x-2 hover:bg-accent transition-colors">
-                <Wallet className="h-4 w-4 text-muted-foreground" />
-                <span className="text-muted-foreground text-sm">64 left</span>
-              </button>
-              <button className="h-full px-8 flex items-center border-r border-border-default hover:bg-accent transition-colors space-x-1">
-                <HelpCircle className="h-4 w-4 text-muted-foreground" />
-                <span className="text-muted-foreground text-sm">Help</span>
-              </button>
-            </div> */}
-          </footer>
-        </div>
-      </div>
+      {selectedQueue ? (
+        <QueueItemDetails 
+          agent={agent}
+          selectedQueue={selectedQueue}
+          onEditClick={() => setEditModalOpen(true)}
+        />
+      ) : (
+        <TaskDetails 
+          agent={agent}
+          selectedExec={selectedExec}
+          onEditClick={() => setEditModalOpen(true)}
+          onExecutionUpdate={handleExecutionUpdate}
+        />
+      )}
 
       <CreateAgentModal
         open={editModalOpen}
@@ -307,9 +355,7 @@ export default function AgentDetails() {
         agent={agent}
         onSuccess={async (updatedAgent) => {
           setEditModalOpen(false);
-          // Immediately update the local state
           setAgent(updatedAgent);
-          // Also refresh from server to ensure we have latest data
           await refreshAgentData();
           toast({
             title: "Success",

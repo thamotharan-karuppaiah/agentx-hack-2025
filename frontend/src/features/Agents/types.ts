@@ -15,6 +15,15 @@ export interface Agent {
         type: string,
         config: any
     }[];
+    integrations: {
+        id: string;
+        moduleId: string;
+        moduleName: string;
+        moduleIcon: string;
+        triggerType: string;
+        triggerName: string;
+        required?: boolean;
+    }[];
     lastRunDate: string;
     lastModified: string;
     created: string;

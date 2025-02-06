@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { UseFormReturn } from 'react-hook-form';
 import { workflowService } from '@/services/workflowService';
 import {
@@ -7,7 +7,6 @@ import {
   FormLabel,
   FormControl,
   FormDescription,
-  FormMessage,
 } from "@/components/ui/form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -93,7 +92,7 @@ function AddToolView({ onAddTool, existingTools }: { onAddTool: (tool: Tool) => 
   }, [activeCategory]);
 
   const filteredTools = (tools: Tool[] | Workflow[]) => {
-    return tools.filter(tool => 
+    return tools.filter(tool =>
       tool.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (tool as Tool).description?.toLowerCase().includes(searchQuery.toLowerCase())
     );
@@ -152,17 +151,17 @@ function AddToolView({ onAddTool, existingTools }: { onAddTool: (tool: Tool) => 
 
       <div className="relative w-full overflow-hidden">
         <ScrollArea className="w-full" orientation="horizontal">
-          <Tabs 
-            defaultValue="your-tools" 
-            value={activeCategory} 
+          <Tabs
+            defaultValue="your-tools"
+            value={activeCategory}
             onValueChange={setActiveCategory}
             className="w-max" // Allow tabs to expand beyond container
           >
             <TabsList className="flex gap-2 p-1">
               {categories.map((category) => (
-                <TabsTrigger 
-                  key={category.id} 
-                  value={category.id} 
+                <TabsTrigger
+                  key={category.id}
+                  value={category.id}
                   className="flex gap-2 whitespace-nowrap"
                 >
                   {category.label}
@@ -177,7 +176,7 @@ function AddToolView({ onAddTool, existingTools }: { onAddTool: (tool: Tool) => 
 
             <TabsContent value="your-tools" className="mt-4">
               <div className="grid grid-cols-1 gap-4">
-                {filteredTools(workflows).map((workflow) => (
+                {filteredTools(workflows.filter(w => w.status === 'published')).map((workflow) => (
                   <div
                     key={workflow.id}
                     className="flex items-center justify-between p-4 border rounded-lg"
@@ -265,167 +264,233 @@ export default function Tools({ form }: ToolsProps) {
     setSelectedTool(tool.id);
   };
 
+  const handleDeleteTool = (toolId: string) => {
+    const newTools = tools.filter(t => t.id !== toolId);
+    form.setValue('tools', newTools);
+    if (selectedTool === toolId) {
+      setSelectedTool(null);
+    }
+  };
+
   return (
     <div className="flex h-full">
-      {/* Left Sidebar - Tool List */}
-      <div className="w-64 border-r">
-        <div className="flex flex-col h-full">
-          {/* Header */}
-          <div className="p-4 border-b">
-            <h3 className="text-sm font-medium text-muted-foreground">
-              Tool settings / All tools
-            </h3>
-          </div>
-
-          {/* Tools List */}
-          <ScrollArea className="flex-1">
-            <div className="p-4 space-y-1">
-              {tools.map((tool: Tool) => (
-                <div
-                  key={tool.id}
-                  className={cn(
-                    "flex items-center justify-between py-1.5 px-2 rounded-md cursor-pointer hover:bg-accent/50 group",
-                    selectedTool === tool.id && "bg-accent"
-                  )}
-                  onClick={() => setSelectedTool(tool.id)}
-                >
-                  <div className="flex items-center gap-2">
-                    <span>{tool.icon}</span>
-                    <span className="text-sm">{tool.name}</span>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6 opacity-0 group-hover:opacity-100"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                    }}
-                  >
-                    <span className="text-xs">!</span>
-                  </Button>
-                </div>
-              ))}
+      {tools.length === 0 && selectedTool !== 'add-new' ? (
+        // Full width empty state
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="flex flex-col items-center justify-center text-center max-w-md">
+            <div className="w-16 h-16 rounded-full bg-accent/40 flex items-center justify-center mb-6">
+              <div className="text-3xl">🛠️</div>
             </div>
-          </ScrollArea>
-
-          {/* Add Tool Button */}
-          <div className="p-4 border-t">
+            <h3 className="text-lg font-medium mb-2">No tools configured</h3>
+            <p className="text-sm text-muted-foreground mb-6">
+              Tools help your agent perform specific actions. Add tools to enhance your agent's capabilities
+              and automate various tasks.
+            </p>
             <Button
-              variant="outline"
-              size="sm"
-              className="w-full"
               onClick={() => setSelectedTool('add-new')}
             >
               <Plus className="h-4 w-4 mr-2" />
-              Add tool
+              Add your first tool
             </Button>
           </div>
         </div>
-      </div>
-
-      {/* Right Content - Tool Configuration or Add Tool View */}
-      <div className="flex-1">
-        <ScrollArea className="h-[calc(100vh-300px)]">
+      ) : (
+        // Split view layout with list or add view
+        <div className="flex w-full">
           {selectedTool === 'add-new' ? (
-            <div className="p-6">
+            <div className="flex-1 p-6">
               <AddToolView onAddTool={handleAddTool} existingTools={tools} />
             </div>
-          ) : selectedTool ? (
-            <div className="p-6 space-y-6">
-              {/* Tool Header */}
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-2">
-                  {tools.find(t => t.id === selectedTool)?.icon && (
-                    <span className="text-xl">{tools.find(t => t.id === selectedTool)?.icon}</span>
-                  )}
-                  <h3 className="text-lg font-semibold">
-                    {tools.find(t => t.id === selectedTool)?.name || 'New Tool'}
-                  </h3>
-                </div>
-                <div className="flex gap-2">
-                  <Button variant="ghost" size="icon">
-                    <Copy className="h-4 w-4" />
-                  </Button>
-                  <Button variant="ghost" size="icon">
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-
-              {/* Tool Configuration Form */}
-              <div className="space-y-6">
-                <FormField
-                  control={form.control}
-                  name={`tools.${tools.findIndex(t => t.id === selectedTool)}.approvalMode`}
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Approval mode</FormLabel>
-                      <FormDescription>
-                        Decide whether or not user approval is required to run
-                      </FormDescription>
-                      <Select value={field.value} onValueChange={field.onChange}>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="required">Approval required</SelectItem>
-                          <SelectItem value="optional">Approval optional</SelectItem>
-                          <SelectItem value="none">No approval needed</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name={`tools.${tools.findIndex(t => t.id === selectedTool)}.maxApprovals`}
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Max approvals asked before auto-run</FormLabel>
-                      <FormDescription>
-                        Enter the number of times this tool will ask for approval within a task before running automatically.
-                      </FormDescription>
-                      <FormControl>
-                        <Input 
-                          placeholder="No limit" 
-                          type="number"
-                          {...field}
-                          onChange={e => field.onChange(e.target.value === '' ? 'no-limit' : Number(e.target.value))}
-                        />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name={`tools.${tools.findIndex(t => t.id === selectedTool)}.prompt`}
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Prompt for how to use</FormLabel>
-                      <FormDescription>
-                        Describe how your agent should use this tool.
-                      </FormDescription>
-                      <FormControl>
-                        <Textarea 
-                          placeholder="Defaults to: Completes a Google search for a query and returns the results."
-                          className="min-h-[100px]"
-                          {...field}
-                        />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-              </div>
-            </div>
           ) : (
-            <div className="h-full flex items-center justify-center text-muted-foreground">
-              Select a tool to configure or add a new one
-            </div>
+            <>
+              {/* Left Sidebar - Tool List */}
+              <div className="w-64 border-r">
+                <div className="flex flex-col h-full">
+                  {/* Header */}
+                  <div className="p-4 border-b">
+                    <h3 className="text-sm font-medium text-muted-foreground">
+                      Tool settings / All tools
+                    </h3>
+                  </div>
+
+                  {/* Tools List */}
+                  <ScrollArea className="flex-1">
+                    <div className="p-4 space-y-1">
+                      {tools.length > 0 ? (
+                        tools.map((tool: Tool) => (
+                          <div
+                            key={tool.id}
+                            className={cn(
+                              "flex items-center justify-between py-1.5 px-2 rounded-md cursor-pointer hover:bg-accent/50 group",
+                              selectedTool === tool.id && "bg-accent"
+                            )}
+                            onClick={() => setSelectedTool(tool.id)}
+                          >
+                            <div className="flex items-center gap-2">
+                              <span>{tool.icon}</span>
+                              <span className="text-sm">{tool.name}</span>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6 opacity-0 group-hover:opacity-100"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteTool(tool.id);
+                              }}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="flex flex-col items-center justify-center py-8 text-center">
+                          <div className="w-12 h-12 rounded-full bg-accent/40 flex items-center justify-center mb-4">
+                            <div className="text-2xl">🛠️</div>
+                          </div>
+                          <h3 className="text-sm font-medium mb-1">No tools configured</h3>
+                          <p className="text-sm text-muted-foreground mb-4">
+                            Add tools to enhance your agent's capabilities
+                          </p>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setSelectedTool('add-new')}
+                          >
+                            <Plus className="h-4 w-4 mr-2" />
+                            Add your first tool
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  </ScrollArea>
+
+                  {/* Add Tool Button */}
+                  <div className="p-4 border-t">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full"
+                      onClick={() => setSelectedTool('add-new')}
+                    >
+                      <Plus className="h-4 w-4 mr-2" />
+                      Add tool
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Content */}
+              <div className="flex-1">
+                <ScrollArea className="h-[calc(100vh-300px)]">
+                  {selectedTool === 'add-new' ? (
+                    <div className="p-6">
+                      <AddToolView onAddTool={handleAddTool} existingTools={tools} />
+                    </div>
+                  ) : selectedTool ? (
+                    <div className="p-6 space-y-6">
+                      {/* Tool Header */}
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-center gap-2">
+                          {tools.find(t => t.id === selectedTool)?.icon && (
+                            <span className="text-xl">{tools.find(t => t.id === selectedTool)?.icon}</span>
+                          )}
+                          <h3 className="text-lg font-semibold">
+                            {tools.find(t => t.id === selectedTool)?.name || 'New Tool'}
+                          </h3>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button variant="ghost" size="icon">
+                            <Copy className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleDeleteTool(selectedTool)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+
+                      {/* Tool Configuration Form */}
+                      <div className="space-y-6">
+                        <FormField
+                          control={form.control}
+                          name={`tools.${tools.findIndex(t => t.id === selectedTool)}.approvalMode`}
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Approval mode</FormLabel>
+                              <FormDescription>
+                                Decide whether or not user approval is required to run
+                              </FormDescription>
+                              <Select value={field.value} onValueChange={field.onChange}>
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="required">Approval required</SelectItem>
+                                  <SelectItem value="optional">Approval optional</SelectItem>
+                                  <SelectItem value="none">No approval needed</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name={`tools.${tools.findIndex(t => t.id === selectedTool)}.maxApprovals`}
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Max approvals asked before auto-run</FormLabel>
+                              <FormDescription>
+                                Enter the number of times this tool will ask for approval within a task before running automatically.
+                              </FormDescription>
+                              <FormControl>
+                                <Input
+                                  placeholder="No limit"
+                                  type="number"
+                                  {...field}
+                                  onChange={e => field.onChange(e.target.value === '' ? 'no-limit' : Number(e.target.value))}
+                                />
+                              </FormControl>
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name={`tools.${tools.findIndex(t => t.id === selectedTool)}.prompt`}
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Prompt for how to use</FormLabel>
+                              <FormDescription>
+                                Describe how your agent should use this tool.
+                              </FormDescription>
+                              <FormControl>
+                                <Textarea
+                                  placeholder="Defaults to: Completes a Google search for a query and returns the results."
+                                  className="min-h-[100px]"
+                                  {...field}
+                                />
+                              </FormControl>
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="h-full flex items-center justify-center text-muted-foreground">
+                      Select a tool to configure or add a new one
+                    </div>
+                  )}
+                </ScrollArea>
+              </div>
+            </>
           )}
-        </ScrollArea>
-      </div>
+        </div>
+      )}
     </div>
   );
 } 

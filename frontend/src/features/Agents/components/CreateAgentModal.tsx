@@ -19,6 +19,11 @@ import { useToast } from "@/hooks/use-toast";
 import { agentService } from '@/services/agentService';
 import { Loader2 } from 'lucide-react';
 import { Agent } from '../types';
+import Integrations from './sections/Integrations';
+import FlowBuilder from './sections/FlowBuilder';
+import Schedules from './sections/Schedules';
+import KnowledgeBase from './sections/KnowledgeBase';
+import SubAgents from './sections/SubAgents';
 // import CoreInstructions from './sections/CoreInstructions';
 // import FlowBuilder from './sections/FlowBuilder';
 // import Abilities from './sections/Abilities';
@@ -49,77 +54,120 @@ const formSchema = z.object({
     maxApprovals: z.union([z.number(), z.literal('no-limit')]),
     prompt: z.string()
   })),
-  // Other sections will be added here
+  // Sub-agents
+  subAgents: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    description: z.string(),
+    role: z.enum(['assistant', 'specialist', 'supervisor']),
+    triggerMode: z.enum(['manual', 'auto', 'conditional']),
+    prompt: z.string()
+  })).optional(),
+  // Integrations
+  integrations: z.array(z.object({
+    id: z.string(),
+    moduleId: z.string(),
+    moduleName: z.string(),
+    moduleIcon: z.string(),
+    triggerType: z.string(),
+    triggerName: z.string(),
+    required: z.boolean().optional()
+  })).optional(),
 });
 
 type FormValues = z.infer<typeof formSchema>;
 
-const sections = [
+// Create a type for section categories
+interface SectionCategory {
+  id: string;
+  label: string;
+  sections: {
+    id: string;
+    label: string;
+    icon: string;
+    component: React.ComponentType<any>;
+  }[];
+}
+
+// Organize sections into categories
+const sectionCategories: SectionCategory[] = [
   {
     id: 'profile',
-    label: 'Agent profile',
-    icon: '👤',
-    component: AgentProfile
+    label: '',  // No label for profile since it's standalone
+    sections: [
+      {
+        id: 'profile',
+        label: 'Agent profile',
+        icon: '👤',
+        component: AgentProfile
+      }
+    ]
   },
   {
     id: 'instructions',
     label: 'Agent instructions',
-    icon: '📝',
-    component: AgentInstructions
-  },
-  {
-    id: 'core',
-    label: 'Core instructions',
-    icon: '⚙️',
-    component: () => <div>Core instructions</div>
-  },
-  {
-    id: 'flow',
-    label: 'Flow builder',
-    icon: '🔄',
-    component: () => <div>Flow builder</div>
+    sections: [
+      {
+        id: 'instructions',
+        label: 'Instructions',
+        icon: '📝',
+        component: AgentInstructions
+      },
+      {
+        id: 'flow',
+        label: 'Flow builder',
+        icon: '🔄',
+        component: FlowBuilder
+      },
+      {
+        id: 'integrations',
+        label: 'Integrations',
+        icon: '🔌',
+        component: Integrations
+      }
+    ]
   },
   {
     id: 'abilities',
-    label: 'Abilities',
-    icon: '💪',
-    component: () => <div>Abilities</div>
+    label: 'Connected abilities',
+    sections: [
+      {
+        id: 'tools',
+        label: 'Tools',
+        icon: '🛠️',
+        component: Tools
+      },
+      {
+        id: 'subagents',
+        label: 'Sub-agents',
+        icon: '🤖',
+        component: SubAgents
+      },
+      {
+        id: 'knowledge',
+        label: 'Knowledge Base',
+        icon: '📚',
+        component: KnowledgeBase
+      }
+    ]
   },
   {
-    id: 'tools',
-    label: 'Tools',
-    icon: '🛠️',
-    component: Tools
-  },
-  {
-    id: 'subagents',
-    label: 'Subagents',
-    icon: '🤖',
-    component: () => <div>Subagents</div>
-  },
-  {
-    id: 'metadata',
-    label: 'Metadata',
-    icon: '📋',
-    component: () => <div>Metadata</div>
-  },
-  {
-    id: 'advanced',
-    label: 'Advanced settings',
-    icon: '⚡',
-    component: () => <div>Advanced settings</div>
-  },
-  {
-    id: 'template',
-    label: 'Configure template',
-    icon: '📐',
-    component: () => <div>Configure template</div>
-  },
-  {
-    id: 'views',
-    label: 'Task Views',
-    icon: '👁️',
-    component: () => <div>Task Views</div>
+    id: 'more',
+    label: 'More options',
+    sections: [
+      {
+        id: 'schedules',
+        label: 'Schedules',
+        icon: '⏰',
+        component: Schedules
+      },
+      {
+        id: 'advanced',
+        label: 'Advanced settings',
+        icon: '⚡',
+        component: () => <div>Advanced settings</div>
+      },
+    ]
   }
 ];
 
@@ -130,11 +178,11 @@ interface CreateAgentModalProps {
   onSuccess: (agent: Agent) => void | Promise<void>;
 }
 
-export function CreateAgentModal({ 
-  open, 
-  onOpenChange, 
-  agent, 
-  onSuccess 
+export function CreateAgentModal({
+  open,
+  onOpenChange,
+  agent,
+  onSuccess
 }: CreateAgentModalProps) {
   const { toast } = useToast();
   const [isSubmitting, setIsSubmitting] = React.useState(false);
@@ -148,7 +196,9 @@ export function CreateAgentModal({
       emoji: '🤖',
       triggers: [],
       systemPrompt: '',
-      tools: []
+      tools: [],
+      subAgents: [],
+      integrations: []
     }
   });
 
@@ -161,7 +211,9 @@ export function CreateAgentModal({
         emoji: agent.emoji,
         triggers: agent.triggers || [],
         systemPrompt: agent.systemPrompt || '',
-        tools: agent.tools || []
+        tools: agent.tools || [],
+        subAgents: agent.subAgents || [],
+        integrations: agent.integrations || []
       });
     } else {
       form.reset({
@@ -170,7 +222,9 @@ export function CreateAgentModal({
         emoji: '🤖',
         triggers: [],
         systemPrompt: '',
-        tools: []
+        tools: [],
+        subAgents: [],
+        integrations: []
       });
     }
   }, [agent, form]);
@@ -178,24 +232,24 @@ export function CreateAgentModal({
   const onSubmit = async (data: FormValues) => {
     try {
       setIsSubmitting(true);
-      
+      let agentData;;
       if (agent?.id) {
         // Update existing agent
-        await agentService.updateAgent(agent.id, data as any);
+        agentData = await agentService.updateAgent(agent.id, data as any);
         toast({
           title: "Agent updated",
           description: "Your agent has been updated successfully.",
         });
       } else {
         // Create new agent
-        await agentService.createAgent(data as any);
+        agentData = await agentService.createAgent(data as any);
         toast({
           title: "Agent created",
           description: "Your new agent has been created successfully.",
         });
       }
 
-      onSuccess(data as Agent);
+      onSuccess(agentData as Agent);
       onOpenChange(false);
     } catch (error) {
       console.error('Failed to save agent:', error);
@@ -209,7 +263,9 @@ export function CreateAgentModal({
     }
   };
 
-  const ActiveComponent = sections.find(s => s.id === activeSection)?.component;
+  const ActiveComponent = sectionCategories
+    .flatMap(category => category.sections)
+    .find(s => s.id === activeSection)?.component;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -219,30 +275,36 @@ export function CreateAgentModal({
             {agent ? 'Edit Agent' : 'Create Agent'}
           </DialogTitle>
         </DialogHeader>
-        
+
         <Form {...form}>
           <div className="flex flex-1 overflow-hidden">
             {/* Left Sidebar */}
             <div className="w-64 border-r bg-muted/20">
               <ScrollArea className="h-full">
-                <div className="p-4 space-y-2">
-                  <div className="text-sm font-medium text-muted-foreground mb-4">
-                    my agent
-                  </div>
-                  {sections.map((section) => (
-                    <button
-                      key={section.id}
-                      onClick={() => setActiveSection(section.id)}
-                      className={cn(
-                        "flex items-center gap-2 w-full px-4 py-2 text-sm rounded-md",
-                        activeSection === section.id
-                          ? "bg-accent text-accent-foreground"
-                          : "hover:bg-accent/50"
+                <div className="p-4 space-y-6">
+                  {sectionCategories.map((category) => (
+                    <div key={category.id} className="space-y-2">
+                      {category.label && (
+                        <h3 className="text-sm font-medium text-muted-foreground px-4">
+                          {category.label}
+                        </h3>
                       )}
-                    >
-                      <span>{section.icon}</span>
-                      <span>{section.label}</span>
-                    </button>
+                      {category.sections.map((section) => (
+                        <button
+                          key={section.id}
+                          onClick={() => setActiveSection(section.id)}
+                          className={cn(
+                            "flex items-center gap-2 w-full px-4 py-2 text-sm rounded-md",
+                            activeSection === section.id
+                              ? "bg-accent text-accent-foreground"
+                              : "hover:bg-accent/50"
+                          )}
+                        >
+                          <span>{section.icon}</span>
+                          <span>{section.label}</span>
+                        </button>
+                      ))}
+                    </div>
                   ))}
                 </div>
               </ScrollArea>

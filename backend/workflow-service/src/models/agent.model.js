@@ -9,6 +9,38 @@ const actionSchema = new Schema({
   description: String
 }, { _id: true });
 
+// Add integration schema
+const integrationSchema = new Schema({
+  id: {
+    type: String,
+    required: true
+  },
+  moduleId: {
+    type: String,
+    required: true
+  },
+  moduleName: {
+    type: String,
+    required: true
+  },
+  moduleIcon: {
+    type: String,
+    required: true
+  },
+  triggerType: {
+    type: String,
+    required: true
+  },
+  triggerName: {
+    type: String,
+    required: true
+  },
+  required: {
+    type: Boolean,
+    default: false
+  }
+});
+
 const agentSchema = new Schema({
   name: {
     type: String,
@@ -44,6 +76,8 @@ const agentSchema = new Schema({
       required: false
     }
   }],
+  // Add integrations array to schema
+  integrations: [integrationSchema],
   actions: [actionSchema],
   lastRunDate: Date,
   tasksDone: {

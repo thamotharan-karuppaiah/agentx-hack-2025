@@ -1,4 +1,12 @@
 import { formatDistanceToNow } from 'date-fns';
+import api from './apiService';
+
+const BASE_URL = 'https://f1cf-13-234-188-229.ngrok-free.app';
+
+const headers = {
+  'x-user-id': '1',
+  'x-workspace-id': '1'
+};
 
 export interface Tool {
   id: string;
@@ -10,8 +18,11 @@ export interface AgentExecution {
   id: string;
   agentId: string;
   title: string;
-  status: 'ongoing' | 'finished' | 'review_required';
+  status: 'running' | 'completed' | 'failed' | 'pending';
+  result?: any;
+  error?: string;
   createdAt: string;
+  updatedAt: string;
   triggeredBy: {
     name: string;
     avatar?: string;
@@ -29,78 +40,46 @@ export interface AgentExecution {
   }>;
 }
 
-// Mock data
-const mockExecutions: AgentExecution[] = [
-  {
-    id: '1',
-    agentId: 'agent-1',
-    title: 'Greeting',
-    status: 'ongoing',
-    createdAt: new Date(Date.now() - 1000 * 60 * 15).toISOString(), // 15 mins ago
-    triggeredBy: {
-      name: 'Thamotharan K',
-    },
-    messages: [
-      {
-        id: 'm1',
-        content: 'Hi',
-        type: 'user',
-        timestamp: new Date(Date.now() - 1000 * 60 * 15).toISOString(),
-        sender: {
-          name: 'Thamotharan K'
-        }
-      },
-      {
-        id: 'm2',
-        content: 'Hello! How can I assist you today?',
-        type: 'agent',
-        timestamp: new Date(Date.now() - 1000 * 60 * 14).toISOString(),
-        sender: {
-          name: 'Agent',
-          avatar: 'https://cdn.jsdelivr.net/gh/RelevanceAI/content-cdn@latest/agents/agent_avatars/agent_avatar_15.svg'
-        }
-      }
-    ]
+// Mock data generator
+const generateMockExecution = (id: string, agentId: string): AgentExecution => ({
+  id,
+  agentId,
+  title: `Task ${id}`,
+  status: ['running', 'completed', 'failed', 'pending'][Math.floor(Math.random() * 4)] as AgentExecution['status'],
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
+  triggeredBy: {
+    name: 'Thamotharan K',
   },
-  {
-    id: '2',
-    agentId: 'agent-1',
-    title: 'Simple Math Question',
-    status: 'finished',
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(), // 1 day ago
-    triggeredBy: {
-      name: 'Thamotharan K',
-    },
-    messages: []
-  }
-];
+  messages: []
+});
 
 export const agentExecutionService = {
-  getExecutions: async (agentId: string) => {
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    return mockExecutions.filter(e => e.agentId === agentId);
+  getExecutions: async (agentId: string): Promise<AgentExecution[]> => {
+    // Mock response
+    return Array.from({ length: 5 }, (_, i) =>
+      generateMockExecution(`exec-${i}`, agentId)
+    );
   },
 
-  getExecution: async (executionId: string) => {
-    await new Promise(resolve => setTimeout(resolve, 500));
-    return mockExecutions.find(e => e.id === executionId);
+  getExecution: async (executionId: string): Promise<AgentExecution> => {
+    // Mock response
+    return generateMockExecution(executionId, 'mock-agent-id');
   },
 
-  createExecution: async (agentId: string, title: string) => {
-    await new Promise(resolve => setTimeout(resolve, 500));
-    const newExecution: AgentExecution = {
-      id: Math.random().toString(36).substring(7),
+  createExecution: async (agentId: string, title: string): Promise<AgentExecution> => {
+    // Mock response
+    return {
+      id: `exec-${Date.now()}`,
       agentId,
       title,
-      status: 'ongoing',
+      status: 'running',
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
       triggeredBy: {
         name: 'Thamotharan K',
       },
       messages: []
     };
-    mockExecutions.push(newExecution);
-    return newExecution;
   }
 }; 

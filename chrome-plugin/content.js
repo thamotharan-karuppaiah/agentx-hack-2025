@@ -48,7 +48,7 @@ async function createAgentButton() {
 
     // Create iframe
     const iframe = document.createElement('iframe');
-    iframe.src = 'http://localhost:5173?wsId=' + (isDesk ? '2' : isSales ? '3' : '1');
+    iframe.src = 'http://localhost:5173?wsId=' + (isDesk ? '1' : isSales ? '1' : '1');
     iframe.className = 'agent-iframe';
 
     // Add elements to container

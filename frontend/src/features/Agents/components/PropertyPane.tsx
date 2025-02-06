@@ -35,7 +35,7 @@ export function PropertyPane({ execution, agent }: PropertyPaneProps) {
             <Zap className="h-4 w-4 text-muted-foreground" />
             <span className="text-xs font-medium">Triggered by</span>
           </div>
-          <span className="text-xs">{execution.triggeredBy.name}</span>
+          <span className="text-xs">{ execution.trigger_type === 'manual' ? 'You' : execution.trigger_type}</span>
         </div>
       </div>
 
@@ -51,15 +51,6 @@ export function PropertyPane({ execution, agent }: PropertyPaneProps) {
         </div>
       </div>
 
-      {/* Metadata */}
-      <div className="space-y-4">
-        <div className="flex items-center gap-2">
-          <Settings2 className="h-4 w-4 text-muted-foreground" />
-          <span className="text-xs font-medium">Metadata</span>
-        </div>
-        <span className="text-xs text-muted-foreground">No custom metadata</span>
-      </div>
-
       {/* Date Created */}
       <div className="space-y-4">
         <div className="flex items-center gap-2">
@@ -67,22 +58,8 @@ export function PropertyPane({ execution, agent }: PropertyPaneProps) {
           <span className="text-xs font-medium">Date created</span>
         </div>
         <span className="text-xs">
-          {format(new Date(execution.createdAt), 'MMM d yyyy @ h:mm a')}
+          {format(new Date(execution.create_date), 'MMM d yyyy @ h:mm a')}
         </span>
-      </div>
-
-      {/* Credits */}
-      <div className="space-y-4">
-        <div className="flex items-center gap-2">
-          <Coins className="h-4 w-4 text-muted-foreground" />
-          <span className="text-xs font-medium">Credits</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs">51</span>
-          <Button variant="ghost" size="icon" className="h-4 w-4 rounded-full">
-            <Clock className="h-3 w-3" />
-          </Button>
-        </div>
       </div>
 
       {/* Schedule */}

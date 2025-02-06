@@ -7,13 +7,13 @@ import {
 } from "@/components/ui/dialog";
 import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { categories, templates } from '../data/agentTemplates';
+import { AgentTemplate, categories, templates } from '../data/agentTemplates';
 import { cn } from "@/lib/utils";
 
 interface TemplateSelectionModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onTemplateSelect: (templateId: string) => void;
+  onTemplateSelect: (template: AgentTemplate) => void;
 }
 
 export const TemplateSelectionModal = ({
@@ -45,7 +45,7 @@ export const TemplateSelectionModal = ({
                 key={category.id}
                 onClick={() => setSelectedCategory(category.id)}
                 className={cn(
-                  "flex items-center gap-2 w-full px-4 py-2 rounded-md text-sm transition-colors",
+                  "flex items-center gap-2 w-full px-4 py-2 rounded-md text-sm transition-colors whitespace-nowrap overflow-hidden text-ellipsis",
                   selectedCategory === category.id
                     ? "bg-primary text-primary-foreground"
                     : "hover:bg-muted"
@@ -75,7 +75,7 @@ export const TemplateSelectionModal = ({
               {filteredTemplates.map((template) => (
                 <button
                   key={template.id}
-                  onClick={() => onTemplateSelect(template.id)}
+                  onClick={() => onTemplateSelect(template)}
                   className="flex flex-col p-4 border rounded-lg text-left hover:border-primary transition-colors"
                 >
                   <div className="flex items-center gap-2 mb-2">

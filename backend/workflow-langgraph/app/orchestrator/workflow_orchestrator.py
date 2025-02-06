@@ -11,7 +11,7 @@ from .nodes.human_node import HumanNode
 import asyncio
 from IPython.display import Image, display
 from pydantic import BaseModel
-from ..models import WorkflowExecutionStream
+from ..models import WorkflowExecutionStream, WorkflowState
 from sqlalchemy.orm import Session
 from datetime import datetime
 import json
@@ -27,33 +27,6 @@ class CustomJSONEncoder(json.JSONEncoder):
                 "_type": obj.__class__.__name__
             }
         return super().default(obj)
-
-class WorkflowState(BaseModel):
-    workflow_id: str
-    current_node: Optional[str] = None
-    output: dict = {}
-    error: Optional[str] = None
-    execution_log: List = []
-    node_inputs: Dict[str, Any] = {}  # Store inputs for each node
-    node_outputs: Dict[str, Any] = {}  # Store outputs for each node
-    message_history: Dict[str, List[Dict[str, Any]]] = {}  # Store message history for each node
-    execution_id: Optional[int] = None  # Add execution_id to track streams
-
-    class Config:
-        arbitrary_types_allowed = True
-
-    def model_dump(self) -> dict:
-        return {
-            "workflow_id": self.workflow_id,
-            "current_node": self.current_node,
-            "output": self.output,
-            "error": self.error,
-            "execution_log": self.execution_log,
-            "node_inputs": self.node_inputs,
-            "node_outputs": self.node_outputs,
-            "message_history": self.message_history,
-            "execution_id": self.execution_id
-        }
 
 class WorkflowOrchestrator:
     def __init__(self, db: Optional[Session] = None):
@@ -345,32 +318,28 @@ class WorkflowOrchestrator:
                         async def node_fn(state):
                             try:
                                 print(f"Executing node: {node_name}")
-                                # Convert WorkflowState to dict for node processing
-                                if isinstance(state, WorkflowState):
-                                    state_dict = state.model_dump()
-                                else:
-                                    state_dict = state
+                                # Ensure state is WorkflowState
+                                if not isinstance(state, WorkflowState):
+                                    state = WorkflowState(**state)
                                 
                                 # Process the node with its process method
-                                result = await node.process(state_dict)
+                                result = await node.process(state)
                                 
-                                # Convert result back to WorkflowState if needed
+                                # Ensure result is WorkflowState
                                 if not isinstance(result, WorkflowState):
-                                    if isinstance(state, WorkflowState):
+                                    if isinstance(result, dict):
                                         # Update the original state with new values
                                         state.node_outputs[node_name] = result
                                         state.current_node = node_name
-                                        if isinstance(result, dict):
-                                            state.output.update(result)
                                         result = state
                                 
                                 print(f"Node {node_name} execution completed")
                                 return result
                             except Exception as e:
                                 print(f"Error in node {node_name}: {str(e)}")
-                                # Add error to state if possible
                                 if isinstance(state, WorkflowState):
                                     state.error = f"Error in node {node_name}: {str(e)}"
+                                    return state
                                 raise
                         return node_fn
                     
@@ -481,7 +450,16 @@ class WorkflowOrchestrator:
             
             # Initialize workflow state
             print("\n--- Initializing workflow state ---")
-            initial_state = await self.initialize_workflow_state(workflow_id, execution_id, initial_inputs)
+            initial_state = WorkflowState(
+                workflow_id=str(workflow_id),
+                execution_id=execution_id,
+                node_inputs=initial_inputs or {},
+                node_outputs={},
+                message_history={},
+                output={},
+                execution_log=[],
+                error=None
+            )
             print(f"Initial state: {json.dumps(self._serialize_data(initial_state.model_dump()), cls=CustomJSONEncoder)}")
             
             # Configure graph execution
@@ -496,30 +474,13 @@ class WorkflowOrchestrator:
             
             print("\n--- Starting graph execution ---")
             # Execute the graph synchronously
-            print("\n=== Debug: Before Graph Execution ===")
-            print(f"Initial state: {self._serialize_data(initial_state.model_dump())}")
-            
             final_state = await graph.ainvoke(
                 initial_state,
                 config=config
             )
             
-            print("\n=== Debug: After Graph Execution ===")
-            print(f"Final state type: {type(final_state)}")
-            
-            # Convert AddableValuesDict to WorkflowState if needed
             if not isinstance(final_state, WorkflowState):
-                try:
-                    # Convert dict-like object to regular dict
-                    state_dict = dict(final_state)
-                    # Create new WorkflowState from dict
-                    final_state = WorkflowState(**state_dict)
-                except Exception as e:
-                    print(f"Error converting state: {str(e)}")
-                    raise
-            
-            print(f"Final state node_outputs: {self._serialize_data(final_state.node_outputs)}")
-            print(f"Final state output: {self._serialize_data(final_state.output)}")
+                final_state = WorkflowState(**final_state)
             
             # Process the final state
             final_output = {}
@@ -541,19 +502,15 @@ class WorkflowOrchestrator:
                     "node_name": node_name,
                     "inputs": final_state.node_inputs.get(node_name, {}),
                     "outputs": outputs,
-                    "execution_log": [],
+                    "execution_log": final_state.execution_log,
                     "message_history": final_state.message_history.get(node_name, [])
                 }
-                if final_state.error:
-                    node_executions[node_name]["error"] = final_state.error
             
-            # If we have an end node, merge its output with existing outputs
+            # If we have an end node, use its output
             if "end" in final_state.node_outputs:
                 end_output = final_state.node_outputs["end"]
-                print(f"End node output: {end_output}")
-                if isinstance(end_output, dict):
-                    final_output.update(end_output)
-                    print(f"Updated final output with end node: {final_output}")
+                if end_output:
+                    final_output = end_output
             
             print(f"\n=== Workflow execution completed ===")
             print(f"Final output: {json.dumps(self._serialize_data(final_output), cls=CustomJSONEncoder)}")

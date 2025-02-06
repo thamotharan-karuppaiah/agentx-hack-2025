@@ -11,6 +11,7 @@ from app.config import settings
 from cloudverse.cloudverse_openai import CloudverseChat
 from pydantic import BaseModel, Field
 from enum import Enum
+from ...models import WorkflowState
 
 class MessageType(str, Enum):
     HUMAN = "human"
@@ -38,7 +39,11 @@ class LLMNodeConfig(BaseModel):
 class LLMNode:
     def __init__(self, config: Dict[str, Any]):
         # Prioritize using name over id, ensuring we have a consistent node identifier
-        self.node_name = config.get("name")
+
+        print("_______CONFIG_______", config)
+        # Get name from data object if it exists, otherwise fall back to id
+        self.node_name = config.get("data", {}).get("name") or config.get("name") or config.get("id")
+        print("_______NODE_NAME_______", self.node_name)
         if not self.node_name:
             raise ValueError("LLM node must have a name")
             
@@ -119,18 +124,16 @@ class LLMNode:
         
         return formatted_text
 
-    async def process(self, state: Dict[str, Any]) -> Dict[str, Any]:
+    async def process(self, state: WorkflowState) -> WorkflowState:
         """Process the input state and return the output state"""
         try:
-            # Get input from state and flatten node_inputs into node_outputs
-            node_inputs = state.get("inputs", {})
-            node_outputs = state.get("node_outputs", {}).copy()  # Create a copy to avoid modifying original
-            
-            # Flatten node_inputs into node_outputs for placeholder replacement
-            for node_id, inputs in node_inputs.items():
-                if node_id not in node_outputs:
-                    node_outputs[node_id] = {}
-                node_outputs[node_id].update(inputs)
+            # Initialize state attributes if they don't exist
+            if not state.node_inputs:
+                state.node_inputs = {}
+            if not state.node_outputs:
+                state.node_outputs = {}
+            if not state.message_history:
+                state.message_history = {}
             
             # Create a copy of message history and format each message
             current_messages = []
@@ -142,7 +145,7 @@ class LLMNode:
             # Format and add messages from config
             if self.config.messages:
                 for message in self.config.messages:
-                    formatted_content = self._format_prompt(message["content"], node_outputs)
+                    formatted_content = self._format_prompt(message["content"], state.node_outputs)
                     if message["type"] == "USER":
                         current_messages.append(HumanMessage(content=formatted_content))
                     elif message["type"] == "ASSISTANT":
@@ -150,13 +153,9 @@ class LLMNode:
             
             # Get and format the current input
             input_key = f"{self.node_name}.{self.config.input_key}"
-            input_text = node_inputs.get(input_key, state.get(self.config.input_key, ""))
-            formatted_input = self._format_prompt(input_text, node_outputs)
-            
-            # Add formatted input message
-            input_message = HumanMessage(content=formatted_input)
-            current_messages.append(input_message)
-            
+            input_text = state.node_inputs.get(input_key, state.node_inputs.get(self.config.input_key, ""))
+            formatted_input = self._format_prompt(input_text, state.node_outputs)
+                        
             # Process messages through LLM
             response = await self.llm.ainvoke(current_messages)
             
@@ -178,27 +177,26 @@ class LLMNode:
                     "additional_kwargs": msg.additional_kwargs
                 })
             
-            # Prepare output with node-specific output key and detailed message history
-            output = {
-                f"{self.node_name}.{self.config.output_key}": response.content,
-                f"{self.node_name}.message_history": serialized_history,
-                "node_output": response.content
+            # Update state with outputs
+            state.node_outputs[self.node_name] = {
+                "output": response.content,
+                "message_history": serialized_history
             }
             
             # Update the workflow state's message history
-            if "message_history" not in state:
-                state["message_history"] = {}
-            state["message_history"][self.node_name] = serialized_history
-            print("OUTPUT", output)
-            return output
+            state.message_history[self.node_name] = serialized_history
+            
+            return state
             
         except Exception as e:
             # Handle errors and add to state
             error_msg = f"Error in LLM processing: {str(e)}"
-            return {
-                f"{self.node_name}.error": error_msg,
-                f"{self.node_name}.{self.config.output_key}": None
+            state.error = error_msg
+            state.node_outputs[self.node_name] = {
+                "error": error_msg,
+                "output": None
             }
+            return state
 
     async def add_message(self, message_config: MessageConfig) -> None:
         """Add a message to the conversation history"""

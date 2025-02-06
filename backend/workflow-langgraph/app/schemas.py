@@ -53,7 +53,8 @@ class APINodeData(BaseModel):
     name: str
     url: str
     headers: Optional[str] = None
-    method: str
+    method: str = "GET"
+    body: Optional[str] = None
     errorBehavior: str = "continue"
 
 class CodeNodeData(BaseModel):

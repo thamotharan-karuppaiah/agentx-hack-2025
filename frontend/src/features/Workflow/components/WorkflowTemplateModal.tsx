@@ -8,12 +8,13 @@ import {
 import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { categories, templates } from '../data/workflowTemplates';
+import { WorkflowTemplate } from '../data/workflowTemplates';
 import { cn } from "@/lib/utils";
 
 interface WorkflowTemplateModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onTemplateSelect: (templateId: string) => void;
+  onTemplateSelect: (template: WorkflowTemplate) => void;
 }
 
 export const WorkflowTemplateModal = ({
@@ -84,7 +85,7 @@ export const WorkflowTemplateModal = ({
               {filteredTemplates.map((template) => (
                 <button
                   key={template.id}
-                  onClick={() => onTemplateSelect(template.id)}
+                  onClick={() => onTemplateSelect(template)}
                   className="flex flex-col p-4 border rounded-lg text-left hover:border-primary transition-colors"
                 >
                   <div className="flex items-center gap-2 mb-2">

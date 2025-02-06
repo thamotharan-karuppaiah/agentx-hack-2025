@@ -240,4 +240,29 @@ async def update_step(
 ):
     """Update a step execution (finish or error)"""
     workflow_service = WorkflowService(db)
-    return await workflow_service.update_step(apps_execution_id, step_id, step_update) 
+    return await workflow_service.update_step(apps_execution_id, step_id, step_update)
+
+@router.post("/sync")
+async def execute_workflow_sync(
+    workflow: schemas.Workflow,
+    db: Session = Depends(get_db),
+    initial_inputs: Dict[str, Any] = None
+):
+    """Execute a workflow synchronously and return the result"""
+    workflow_service = WorkflowService(db)
+    try:
+        # Create and execute the workflow synchronously
+        workflow_execution = await workflow_service.create_workflow(workflow, initial_inputs)
+        result = await workflow_service.execute_workflow_sync(workflow_execution, workflow, initial_inputs)
+        
+        # The result from orchestrator contains the actual graph execution result
+        return {
+            "execution_id": workflow_execution.id,
+            "status": "COMPLETED",
+            "result": result.get("result", {}),  # Graph execution result
+            "node_executions": result.get("node_executions", []),  # Individual node results
+            "error": None
+        }
+    except Exception as e:
+        print(f"Error executing workflow: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -1,6 +1,7 @@
 from typing import Dict, Any
 import asyncio
 from ...schemas import CodeNodeData
+from ...models import WorkflowState
 
 class CodeNode:
     def __init__(self, config: Dict[str, Any]):
@@ -16,18 +17,14 @@ class CodeNode:
                 variables[f"{node_id}.{key}"] = value
         return variables
 
-    async def process(self, state: Dict[str, Any]) -> Dict[str, Any]:
+    async def process(self, state: WorkflowState) -> WorkflowState:
         """Execute the code and return the result"""
         try:
-            # Get node inputs and outputs from state
-            node_inputs = state.get("inputs", {})
-            node_outputs = state.get("node_outputs", {})
-            
             # Create a local namespace with state variables
             local_ns = {
-                **state,
-                "node_inputs": node_inputs,
-                "node_outputs": self._prepare_variables(node_outputs)
+                "state": state.model_dump(),
+                "node_inputs": state.node_inputs,
+                "node_outputs": self._prepare_variables(state.node_outputs)
             }
             
             # Execute the code in the namespace
@@ -42,24 +39,28 @@ class CodeNode:
             # Get the result from the last expression
             result = local_ns.get('result', None)
             
-            # Prepare output with node-specific keys
-            return {
-                f"{self.node_name}.result": result,
-                f"{self.node_name}.output": local_ns.get('output', None),
-                f"{self.node_name}.variables": {
+            # Update state with outputs
+            state.node_outputs[self.node_name] = {
+                "result": result,
+                "output": local_ns.get('output', None),
+                "variables": {
                     k: v for k, v in local_ns.items() 
-                    if k not in ['__builtins__', 'asyncio', 'node_inputs', 'node_outputs'] 
+                    if k not in ['__builtins__', 'asyncio', 'node_inputs', 'node_outputs', 'state'] 
                     and not k.startswith('_')
                 }
             }
 
+            return state
+
         except Exception as e:
             error_msg = f"Error in code execution: {str(e)}"
             if self.config.errorBehavior == "continue":
-                return {
-                    f"{self.node_name}.error": error_msg,
-                    f"{self.node_name}.result": None,
-                    f"{self.node_name}.output": None,
-                    f"{self.node_name}.variables": {}
+                state.node_outputs[self.node_name] = {
+                    "error": error_msg,
+                    "result": None,
+                    "output": None,
+                    "variables": {}
                 }
+                state.error = error_msg
+                return state
             raise Exception(error_msg) 

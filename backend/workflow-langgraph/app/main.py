@@ -1,8 +1,10 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from .routers import workflow_router, execution_router
-from .config import settings
-from .database import init_db
+import uvicorn
+from app.agent import agent_router
+from app.routers import workflow_router, execution_router
+from app.config import settings
+from app.database import init_db
 
 # Create database tables
 
@@ -39,6 +41,12 @@ app.include_router(
     tags=["executions"]
 )
 
+app.include_router(
+    agent_router.router,
+    prefix="/agent",
+    tags=["agent"]
+)
+
 @app.get("/")
 async def root():
-    return {"message": "Welcome to AI Workflow Orchestration API"} 
+    return {"message": "Welcome to AI Workflow Orchestration API"}

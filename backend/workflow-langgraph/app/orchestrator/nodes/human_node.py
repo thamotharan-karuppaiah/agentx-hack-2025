@@ -1,82 +1,87 @@
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import asyncio
-from ...schemas import HumanNodeData
+from ...models import WorkflowState
 
 class HumanNode:
     def __init__(self, config: Dict[str, Any]):
         self.node_id = config.get("name", config.get("id", "human"))
         self.node_name = self.node_id
-        self.config = HumanNodeData(**config.get("data", {}))
-        self.state = None
+        self.config = config.get("data", {})
+        self.state: Optional[WorkflowState] = None
         self.completed = False
 
     def _format_prompt(self, prompt: str, node_outputs: Dict[str, Any], node_inputs: Dict[str, Any]) -> str:
-        """Format the prompt with node outputs and inputs"""
-        try:
-            # Create a dictionary of available variables
-            variables = {}
-            for node_id, outputs in node_outputs.items():
+        """Format prompt with variables from state"""
+        formatted = prompt
+        # Replace output variables
+        for node_name, outputs in node_outputs.items():
+            if isinstance(outputs, dict):
                 for key, value in outputs.items():
-                    variables[f"{node_id}.{key}"] = value
-            
-            # Add node inputs to variables
-            variables.update(node_inputs)
-            
-            return prompt.format(**variables)
-        except:
-            return prompt
+                    formatted = formatted.replace(
+                        f"${{{node_name}.{key}}}", str(value)
+                    )
+        # Replace input variables
+        for key, value in node_inputs.items():
+            formatted = formatted.replace(f"${{{key}}}", str(value))
+        return formatted
 
-    async def process(self, state: Dict[str, Any]) -> Dict[str, Any]:
+    async def process(self, state: WorkflowState) -> WorkflowState:
         """Process human interaction node"""
         try:
-            # Get node inputs and outputs from state
-            node_inputs = state.get("inputs", {})
-            node_outputs = state.get("node_outputs", {})
-            
             # Store current state
-            self.state = {
-                **state,
-                "node_inputs": node_inputs,
-                "node_outputs": node_outputs
-            }
+            self.state = state
             self.completed = False
             
             # If there's a prompt, add it to the state
             prompt = None
-            if self.config.prompt:
+            if self.config.get("prompt"):
                 prompt = self._format_prompt(
-                    self.config.prompt,
-                    node_outputs,
-                    node_inputs
+                    self.config["prompt"],
+                    state.node_outputs,
+                    state.node_inputs
                 )
-                self.state["prompt"] = prompt
+                state.node_outputs[self.node_name] = {"prompt": prompt}
             
             # Wait for human input
             while not self.completed:
                 await asyncio.sleep(1)
             
-            # Return state with human input and node-specific keys
-            return {
-                f"{self.node_name}.input": self.state.get("human_input"),
-                f"{self.node_name}.output": self.state.get("output"),
-                f"{self.node_name}.prompt": prompt
-            }
+            # Update state with human input and output
+            if not state.node_outputs.get(self.node_name):
+                state.node_outputs[self.node_name] = {}
+            
+            state.node_outputs[self.node_name].update({
+                "input": self.state.node_inputs.get(self.node_name, {}).get("input"),
+                "output": self.state.node_outputs.get(self.node_name, {}).get("output"),
+                "prompt": prompt
+            })
+            
+            return state
             
         except Exception as e:
             error_msg = f"Error in human node: {str(e)}"
-            if self.config.errorBehavior == "continue":
-                return {
-                    f"{self.node_name}.error": error_msg,
-                    f"{self.node_name}.input": None,
-                    f"{self.node_name}.output": None,
-                    f"{self.node_name}.prompt": self.config.prompt if hasattr(self, 'config') else None
-                }
+            if self.config.get("errorBehavior") == "continue":
+                if not state.node_outputs.get(self.node_name):
+                    state.node_outputs[self.node_name] = {}
+                state.node_outputs[self.node_name].update({
+                    "error": error_msg,
+                    "input": None,
+                    "output": None,
+                    "prompt": self.config.get("prompt")
+                })
+                state.error = error_msg
+                return state
             raise Exception(error_msg)
     
     def add_human_input(self, input_text: str, output: Any = None):
         """Add human input to continue the workflow"""
         if self.state is not None:
-            self.state["human_input"] = input_text
+            if not self.state.node_inputs.get(self.node_name):
+                self.state.node_inputs[self.node_name] = {}
+            if not self.state.node_outputs.get(self.node_name):
+                self.state.node_outputs[self.node_name] = {}
+                
+            self.state.node_inputs[self.node_name]["input"] = input_text
             if output is not None:
-                self.state["output"] = output
+                self.state.node_outputs[self.node_name]["output"] = output
             self.completed = True 

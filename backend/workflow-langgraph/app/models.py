@@ -1,3 +1,5 @@
+from typing import Any, Dict, List, Optional
+from pydantic import BaseModel
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, Text, JSON, BigInteger, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -65,3 +67,14 @@ class WorkflowExecutionStream(Base):
     timestamp = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     execution = relationship("WorkflowExecution", back_populates="streams") 
+
+class WorkflowState(BaseModel):
+    workflow_id: str
+    current_node: Optional[str] = None
+    output: dict = {}
+    error: Optional[str] = None
+    execution_log: List = []
+    node_inputs: Dict[str, Any] = {}  # Store inputs for each node
+    node_outputs: Dict[str, Any] = {}  # Store outputs for each node
+    message_history: Dict[str, List[Dict[str, Any]]] = {}  # Store message history for each node
+    execution_id: Optional[int] = None  # Add execution_id to track streams

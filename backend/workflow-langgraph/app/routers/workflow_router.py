@@ -7,6 +7,7 @@ from ..services.workflow_service import WorkflowService
 import json
 from datetime import datetime
 from fastapi import BackgroundTasks
+import httpx
 
 router = APIRouter()
 
@@ -242,12 +243,27 @@ async def update_step(
     workflow_service = WorkflowService(db)
     return await workflow_service.update_step(apps_execution_id, step_id, step_update)
 
-@router.post("/sync")
+@router.post("/{workflow_id}/sync")
 async def execute_workflow_sync(
-    workflow: schemas.Workflow,
+    workflow_id: str,
     db: Session = Depends(get_db),
     initial_inputs: Dict[str, Any] = None
 ):
+    url = f"http://localhost:8096/workflow-service/v1/workflows/{workflow_id}"
+    headers = {
+        "x-workspace-id": "1",
+        "x-user-id": "2"
+    }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, headers=headers)
+    
+    if response.status_code != 200:
+        raise HTTPException(status_code=response.status_code, detail="Failed to fetch workflow")
+
+    workflow = workflow = schemas.Workflow(**response.json())  # Convert dict to Pydantic model
+
+    print(f"workflow: {workflow}")
     """Execute a workflow synchronously and return the result"""
     workflow_service = WorkflowService(db)
     try:

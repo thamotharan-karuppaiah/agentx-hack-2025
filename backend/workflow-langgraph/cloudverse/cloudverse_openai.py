@@ -1,6 +1,7 @@
 from typing import Any, List, Optional, TypedDict, Dict, Callable, Union, Tuple
 from langchain.schema import BaseMessage, ChatResult, AIMessage, HumanMessage, SystemMessage, ChatGeneration, \
     FunctionMessage
+from langchain_core.messages import ToolMessage
 from langchain_core.language_models import BaseChatModel
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult, LLMResult
 from langchain_core.callbacks import CallbackManagerForLLMRun
@@ -11,6 +12,7 @@ import json
 import requests
 import tiktoken
 from datetime import datetime
+import uuid
 
 
 class MessageRole(str, Enum):
@@ -165,28 +167,28 @@ class CloudverseChat(BaseChatModel):
         }
 
         # Find the matching tool - looking for Tool objects by checking name attribute
-        matching_tool = next((tool for tool in self.tools if 
-                            hasattr(tool, "name") and tool.name == tool_name), None)
+        # matching_tool = next((tool for tool in self.tools if 
+        #                     hasattr(tool, "name") and tool.name == tool_name), None)
 
-        if matching_tool:
-            try:
-                # Execute the tool function with the arguments
-                result = matching_tool.func(**args)
+        # if matching_tool:
+        #     try:
+        #         # Execute the tool function with the arguments
+        #         result = matching_tool.func(**args)
                 
-                # Handle the result
-                if isinstance(result, dict) and "status" in result:
-                    tool_response.update(result)
-                else:
-                    tool_response["status"] = "success"
-                    tool_response["result"] = str(result)
+        #         # Handle the result
+        #         if isinstance(result, dict) and "status" in result:
+        #             tool_response.update(result)
+        #         else:
+        #             tool_response["status"] = "success"
+        #             tool_response["result"] = str(result)
                 
-                return str(tool_response.get("result", "")), tool_response
+        #         return str(tool_response.get("result", "")), tool_response
                 
-            except Exception as e:
-                error_msg = f"Error executing tool {tool_name}: {str(e)}"
-                tool_response["status"] = "error"
-                tool_response["error"] = str(e)
-                return error_msg, tool_response
+        #     except Exception as e:
+        #         error_msg = f"Error executing tool {tool_name}: {str(e)}"
+        #         tool_response["status"] = "error"
+        #         tool_response["error"] = str(e)
+        #         return error_msg, tool_response
 
         error_msg = f"Tool {tool_name} not found"
         tool_response["status"] = "error"
@@ -248,38 +250,38 @@ class CloudverseChat(BaseChatModel):
             tool_outputs = []
             final_response_data = response_data
 
-            if tool_calls:
-                for tool_call in tool_calls:
-                    result, tool_info = self._handle_tool_call(tool_call)
-                    tool_outputs.append(tool_info)
-                    messages.append(FunctionMessage(
-                        content=result,
-                        name=tool_call["toolName"],
-                        additional_kwargs={"tool_info": tool_info}
-                    ))
+            # if tool_calls:
+            #     for tool_call in tool_calls:
+            #         result, tool_info = self._handle_tool_call(tool_call)
+            #         tool_outputs.append(tool_info)
+            #         messages.append(FunctionMessage(
+            #             content=result,
+            #             name=tool_call["toolName"],
+            #             additional_kwargs={"tool_info": tool_info}
+            #         ))
 
-                # Make another API call with the tool results
-                payload = self._convert_messages_to_cloudverse_format(messages)
-                response = requests.post(
-                    f"{self.proxy_url}/api/v2/chat",
-                    headers=headers,
-                    json=payload,
-                    timeout=self.request_timeout
-                )
+            #     # Make another API call with the tool results
+            #     payload = self._convert_messages_to_cloudverse_format(messages)
+            #     response = requests.post(
+            #         f"{self.proxy_url}/api/v2/chat",
+            #         headers=headers,
+            #         json=payload,
+            #         timeout=self.request_timeout
+            #     )
                 
-                if response.status_code != 200:
-                    error_msg = f"Tool response request failed with status {response.status_code}: {response.text}"
-                    raise requests.RequestException(error_msg)
+            #     if response.status_code != 200:
+            #         error_msg = f"Tool response request failed with status {response.status_code}: {response.text}"
+            #         raise requests.RequestException(error_msg)
 
-                try:
-                    final_response_data = response.json()
-                except json.JSONDecodeError:
-                    final_response_data = {
-                        "text": response.text,
-                        "finish_reason": "stop",
-                        "usage": {},
-                        "model": self.model_name,
-                    }
+            #     try:
+            #         final_response_data = response.json()
+            #     except json.JSONDecodeError:
+            #         final_response_data = {
+            #             "text": response.text,
+            #             "finish_reason": "stop",
+            #             "usage": {},
+            #             "model": self.model_name,
+            #         }
 
             # Get content from the final response
             content = final_response_data.get("text", "") or final_response_data.get("content", "")
@@ -295,8 +297,8 @@ class CloudverseChat(BaseChatModel):
                 "timestamp": datetime.utcnow().isoformat(),
             }
 
-            if tool_outputs:
-                generation_info["tool_outputs"] = tool_outputs
+            # if tool_outputs:
+            #     generation_info["tool_outputs"] = tool_outputs
 
             # Create LLM output
             llm_output = {
@@ -311,36 +313,59 @@ class CloudverseChat(BaseChatModel):
                 },
                 "tool_usage": {
                     "total_tools_called": len(tool_calls),
-                    "tool_calls": tool_outputs
+                    "tool_calls": tool_calls
                 },
                 "api_version": final_response_data.get("api_version"),
                 "timestamp": datetime.utcnow().isoformat(),
             }
 
-            # Create the message and generation
-            message = AIMessage(
-                content=content,
-                additional_kwargs={
-                    "raw_response": final_response_data,
-                    "tool_outputs": tool_outputs if tool_outputs else None
-                }
-            )
+        
+            if tool_calls:
+                # Format tool calls and create messages
+                messages = []
+                for tool_call in tool_calls:
+                    tool_id = tool_call.get("id", str(uuid.uuid4()))
+                    formatted_tool_call = {
+                        "id": tool_id,
+                        "type": "function",
+                        "function": {
+                            "name": tool_call.get("toolName", ""),
+                            "arguments": json.dumps(tool_call.get("args", {}))
+                        }
+                    }
+                    
+                    messages.append(ToolMessage(
+                        content=content,
+                        tool_call_id=tool_id,
+                        additional_kwargs={
+                            "raw_response": final_response_data,
+                            "tool_outputs": tool_call if tool_calls else None
+                        }
+                    ))
 
-            generation = ChatGeneration(
-                message=message,
-                generation_info=generation_info
-            )
+                # Create a generation for each message
+                generations = [
+                    ChatGeneration(
+                        message=msg,
+                        generation_info=generation_info
+                    ) for msg in messages
+                ]
 
-            # Update chat history
-            self.chat_history.append({
-                "role": "assistant",
-                "content": content,
-                "timestamp": datetime.utcnow().isoformat(),
-                "metadata": generation_info
-            })
+            else:
+                message = AIMessage(
+                    content=content,
+                    additional_kwargs={
+                        "raw_response": final_response_data,
+                        "tool_outputs": tool_outputs if tool_outputs else None
+                    }
+                )
+                generations = [ChatGeneration(
+                    message=message,
+                    generation_info=generation_info
+                )]
 
             return ChatResult(
-                generations=[generation],
+                generations=generations,
                 llm_output=llm_output
             )
 

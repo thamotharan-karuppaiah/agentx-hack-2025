@@ -18,7 +18,9 @@ import requests
 import httpx
 from asyncio import create_task
 import asyncio
+from ..services.workflow_service import WorkflowService
 
+from app import schemas
 from app.config import settings
 from app.database import get_db
 from cloudverse.cloudverse_openai import CloudverseChat
@@ -177,47 +179,46 @@ def init_tools_definition(response_data):
             print(f"Generated schema for {tool['id']}:", tool_args_model.model_json_schema())
             
             async def tool_func(**kwargs):
-                print(f"Executing tool {tool['id']} with args:", kwargs)  # Debug print
-                async with httpx.AsyncClient() as client:
-                    try:
-                        response = await client.post(
-                            f"http://localhost:8096/workflows/{tool['id']}/sync",
-                            json={"initial_inputs": kwargs},
-                            headers={
-                                "x-workspace-id": "1",
-                                "x-user-id": "1"
-                            }
-                        )
-                        response.raise_for_status()
-                        result = response.json()
-                        # Format the result to match the expected tool response structure
-                        formatted_result = {
-                            "status": "success",
-                            "result": result.get("result", {}),
-                            "timestamp": datetime.utcnow().isoformat()
-                        }
-                        return formatted_result
-                    except httpx.HTTPError as e:
-                        error_message = f"Error executing workflow {tool['id']}: {str(e)}"
-                        return {
-                            "status": "error",
-                            "error": error_message,
-                            "timestamp": datetime.utcnow().isoformat()
-                        }
-            
-            # Modified sync wrapper function
-            def sync_tool_func(**kwargs):
-                # Create a new event loop if there isn't one
-                try:
-                    loop = asyncio.get_event_loop()
-                except RuntimeError:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
+                print(f"Executing tool {tool['id']} with args:", kwargs)
+                db: Session = Depends(get_db)
                 
-                # Run the async function and return its result
-                return loop.run_until_complete(tool_func(**kwargs))
-            
-            tool_func = sync_tool_func
+                try:
+                    response = requests.get(
+                        f"http://localhost:8096/workflow-service/v1/workflows/{tool['id']}",
+                        json={"initial_inputs": kwargs},
+                        headers={
+                            "x-workspace-id": "1",
+                            "x-user-id": "1"
+                        }
+                    )
+                    response.raise_for_status()
+                    result = response.json()
+
+                    workflow = schemas.Workflow(**response.json())
+                    initial_inputs = kwargs
+
+                    workflow_service = WorkflowService(db)
+                    
+                    try:
+                        workflow_execution = await workflow_service.create_workflow(workflow, initial_inputs)
+                        result = await workflow_service.execute_workflow_sync(workflow_execution, workflow, initial_inputs)
+                        return {
+                            "execution_id": workflow_execution.id,
+                            "status": "COMPLETED",
+                            "result": result.get("result", {}),  # Graph execution result
+                            "node_executions": result.get("node_executions", []),  # Individual node results
+                            "error": None
+                        }
+                    except Exception as e:
+                        print(f"Error executing workflow: {str(e)}")
+                        raise HTTPException(status_code=500, detail=str(e))
+                except requests.RequestException as e:
+                    error_message = f"Error executing workflow {tool['id']}: {str(e)}"
+                    return {
+                        "status": "error",
+                        "error": error_message,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
             
             # Create the Tool object
             tool_obj = Tool(
@@ -298,25 +299,30 @@ async def create_and_invoke_agent(agent_id, trigger_input, execution_id, timesta
     # history.append(input_message)
     history.append(message)
 
-    execution_db.history = history
+    execution_db.history = message
     execution_db.status = ExecutionStatus.IDLE
     db.commit()
     db.refresh(execution_db)
 
 def generate_message(agent_response):
-    message = dict()
-    message['timestamp'] = datetime.now(timezone.utc)
-    message['content'] = agent_response['messages'][-1].content
-
-    if type(agent_response['messages'][-1])==AIMessage:
-        message['type'] = 'assistant'
-    elif type(agent_response['messages'][-1])==HumanMessage:
-        message['type'] = 'user'
-    elif type(agent_response['messages'][-1])==ToolMessage:
-        message['type'] = 'tool'
-    elif type(agent_response['messages'][-1])==SystemMessage:
-        message['type'] = 'system'
-    return message
+    messages = agent_response['messages']
+    data_list = []
+    for m in messages:
+        message = dict()
+        message['timestamp'] = datetime.now(timezone.utc)
+        message['content'] = m.content
+        if type(m)==AIMessage:
+            message['type'] = 'assistant'
+        elif type(m)==HumanMessage:
+            message['type'] = 'user'
+        elif type(m)==ToolMessage:
+            message['type'] = 'tool'
+            message['tool_call_id'] = m.tool_call_id
+            message['tool_calls'] = m.additional_kwargs['tool_outputs']
+        elif type(m)==SystemMessage:
+            message['type'] = 'system'
+        data_list.append(message)
+    return data_list
 
 
 @router.get("/{execution_id}",

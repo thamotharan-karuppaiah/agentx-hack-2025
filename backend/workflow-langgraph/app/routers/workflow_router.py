@@ -261,7 +261,7 @@ async def execute_workflow_sync(
     if response.status_code != 200:
         raise HTTPException(status_code=response.status_code, detail="Failed to fetch workflow")
 
-    workflow = workflow = schemas.Workflow(**response.json())  # Convert dict to Pydantic model
+    workflow = schemas.Workflow(**response.json())  # Convert dict to Pydantic model
 
     print(f"workflow: {workflow}")
     """Execute a workflow synchronously and return the result"""

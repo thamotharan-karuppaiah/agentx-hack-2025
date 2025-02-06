@@ -2,12 +2,12 @@ import json
 
 from fastapi import FastAPI, HTTPException, status, Depends, APIRouter
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
 from langgraph.prebuilt import create_react_agent
 from sqlalchemy import create_engine, Column, String, DateTime, Enum as SQLAEnum, JSON, Integer, Identity
 from sqlalchemy.orm import sessionmaker, Session, declarative_base, Mapped
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Any, List, Dict
 from langchain_core.tools import Tool
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, PromptTemplate
@@ -78,6 +78,24 @@ def init_llm():
          status_code=status.HTTP_201_CREATED)
 async def create_execution(request: CreateExecutionRequest, agent_id: str , db: Session = Depends(get_db)):
 
+    current_time = datetime.now(timezone.utc)
+    db_execution = ExecutionDB(
+        status=ExecutionStatus.AGENT_IN_PROGRESS,
+        trigger_type=request.trigger_type,
+        trigger_input=request.trigger_input,
+        create_date=current_time,
+        last_run_at=current_time,
+        triggered_by="1",
+        history=[],
+        tool_state={}
+    )
+    db.add(db_execution)
+    db.commit()
+    db.refresh(db_execution)
+    await create_and_invoke_agent(agent_id, request.trigger_input,  db_execution.id, current_time, db)
+    return Execution.model_validate(db_execution)
+
+async def create_and_invoke_agent(agent_id, trigger_input, execution_id, timestamp, db: Session = Depends(get_db)):
     headers = {
         "x-workspace-id": "1",
         "x-user-id": "1"
@@ -89,38 +107,48 @@ async def create_execution(request: CreateExecutionRequest, agent_id: str , db: 
     llm = init_llm()
     tools = [
         Tool(
-            name = "answer question",
-            func= addition,
+            name="answer question",
+            func=addition,
             description="use the tool"
         )
-    ] # todo: fetch tools from api call and add it here
+    ]  # todo: fetch tools from api call and add it here
 
-
-    pre_built_agent = create_react_agent(model=llm, prompt=response_data["systemPrompt"],tools=[])
-    messages = {"messages": [("user", request.trigger_input)]}
+    pre_built_agent = create_react_agent(model=llm, prompt=response_data["systemPrompt"], tools=[])
+    messages = {"messages": [("user", trigger_input)]}
 
     # Pass the necessary variables as a dictionary
     agent_response = pre_built_agent.invoke(messages)
-    print(agent_response)
+    # todo: add other columns when tool calling or other things are in response
 
-    current_time = datetime.now()
-    db_execution = ExecutionDB(
-        status=ExecutionStatus.AGENT_IN_PROGRESS,
-        trigger_type=request.trigger_type,
-        trigger_input=request.trigger_input,
-        create_date=current_time,
-        last_run_at=current_time,
-        triggered_by="1",
-        history=[],
-        tool_state={}
-    )
 
-    db.add(db_execution)
+    execution_db = db.query(ExecutionDB).filter(ExecutionDB.id == execution_id).first()
+    execution = Execution.model_validate(execution_db)
+    input_message = {'type': 'human', 'content': trigger_input, 'timestamp': timestamp}
+    message = generate_message(agent_response)
+
+    history = execution.history
+    history.append(input_message)
+    history.append(message)
+
+    execution_db.history = history
     db.commit()
-    db.refresh(db_execution)
+    db.refresh(execution_db)
 
+def generate_message(agent_response):
+    message = dict()
+    message['timestamp'] = agent_response['messages'][-1].response_metadata['timestamp']
+    message['content'] = agent_response['messages'][-1].content
 
-    return Execution.model_validate(db_execution)
+    if type(agent_response['messages'][-1])==AIMessage:
+        message['type'] = 'agent'
+    elif type(agent_response['messages'][-1])==HumanMessage:
+        message['type'] = 'user'
+    elif type(agent_response['messages'][-1])==ToolMessage:
+        message['type'] = 'tool'
+    elif type(agent_response['messages'][-1])==SystemMessage:
+        message['type'] = 'system'
+    return message
+
 
 
 @router.get("/{execution_id}",
@@ -135,7 +163,7 @@ async def get_execution(execution_id: str, db: Session = Depends(get_db)):
     return Execution.model_validate(execution)
 
 
-@router.post("/{execution_id}/continueExecution",
+@router.post("/{agent_id}/{execution_id}/continueChat",
           response_model=Execution)
 async def continue_execution(execution_id: str, db: Session = Depends(get_db)):
     execution = db.query(ExecutionDB).filter(ExecutionDB.execution_id == execution_id).first()

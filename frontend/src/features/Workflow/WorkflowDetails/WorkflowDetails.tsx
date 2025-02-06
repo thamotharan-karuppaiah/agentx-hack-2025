@@ -50,7 +50,7 @@ const WorkflowDetails: React.FC = () => {
         <Button 
           variant="outline" 
           size="sm" 
-          onClick={() => navigate(-1)}
+          onClick={() => navigate(`../`)}
           className="h-8 w-8 p-0 border-gray-200 ml-4"
         >
           <ChevronLeft className="h-4 w-4" />
@@ -170,7 +170,7 @@ const WorkflowDetails: React.FC = () => {
       </div>
 
       {/* Content */}
-      <div className="flex-1">
+      <div className="flex-1 min-h-0 overflow-y-auto">
         <Outlet />
       </div>
     </div>

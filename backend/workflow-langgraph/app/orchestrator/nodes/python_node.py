@@ -4,36 +4,37 @@ from typing import Dict, Any
 from langchain_experimental.tools import PythonREPLTool
 from contextlib import redirect_stdout
 import io
+import asyncio
+from ...models import WorkflowState
 
 class PythonNode:
     """Node for executing Python code with placeholder replacement"""
     
-    def __init__(self, node_config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any]):
+        self.node_id = config.get("name", config.get("id", "python"))
+        self.node_name = self.node_id
+        self.config = config.get("data", {})
         self.repl = PythonREPLTool()
         
-    def _replace_placeholders(self, code: str, state: Dict[str, Any]) -> str:
+    def _replace_placeholders(self, code: str, state: WorkflowState) -> str:
         """Replace placeholders in code with values from state"""
-        # Get data from state
-        data = state.get("webrequest_output", {})
-        if isinstance(data, str):
-            try:
-                data = json.loads(data)
-            except:
-                data = {}
-
-        # Replace {{variable}} placeholders with values from data
-        for match in re.finditer(r'\{\{(.*?)\}\}', code):
-            placeholder = match.group(1).strip()
-            try:
-                # Handle nested keys (e.g., data.user.name)
-                value = data
-                for key in placeholder.split('.'):
-                    value = value[key]
-                code = code.replace(match.group(0), repr(value))
-            except (KeyError, TypeError):
-                print(f"Warning: {placeholder} not found in data")
-                
-        return code
+        result = code
+        
+        # Replace node outputs
+        for node_name, outputs in state.node_outputs.items():
+            if isinstance(outputs, dict):
+                for key, value in outputs.items():
+                    placeholder = f"${{{node_name}.{key}}}"
+                    result = result.replace(placeholder, str(value))
+        
+        # Replace node inputs
+        for node_name, inputs in state.node_inputs.items():
+            if isinstance(inputs, dict):
+                for key, value in inputs.items():
+                    placeholder = f"${{{node_name}.{key}}}"
+                    result = result.replace(placeholder, str(value))
+        
+        return result
 
     def _execute_code(self, code: str) -> Dict[str, Any]:
         """Execute code and capture result"""
@@ -57,50 +58,55 @@ result = None
         except Exception as e:
             return {"error": str(e)}
 
-    async def process(self, state: Dict[str, Any]) -> Dict[str, Any]:
+    async def process(self, state: WorkflowState) -> WorkflowState:
         """Execute Python code with state data"""
         try:
-            # Get code from state
-            code = state.get("python_input", "")
+            # Get code from state inputs
+            code = state.node_inputs.get(self.node_name, {}).get("python_input", "")
             if not code:
-                raise ValueError("No Python code provided in state.python_input")
+                raise ValueError("No Python code provided in state.node_inputs")
                 
             # Replace placeholders and execute code
             code_to_execute = self._replace_placeholders(code, state)
             execution_result = self._execute_code(code_to_execute)
             
+            # Initialize node outputs if needed
+            if not state.node_outputs.get(self.node_name):
+                state.node_outputs[self.node_name] = {}
+            
             if "error" in execution_result:
-                state["python_node_output"] = {"error": execution_result["error"]}
-                return {
-                    "type": "python",
-                    "status": "error",
+                state.node_outputs[self.node_name].update({
                     "error": execution_result["error"],
-                    "code_executed": code_to_execute,
-                    **state
-                }
+                    "status": "error",
+                    "code_executed": code_to_execute
+                })
+                state.error = execution_result["error"]
+                return state
             
             result = execution_result["output"]
             
             # Update state with execution result
             if isinstance(result, dict):
-                state["python_node_output"] = result
+                state.node_outputs[self.node_name].update(result)
             else:
-                state["python_node_output"] = {"output": result}
+                state.node_outputs[self.node_name]["output"] = result
             
-            return {
-                "type": "python",
+            state.node_outputs[self.node_name].update({
                 "status": "success",
-                "result": result,
-                "code_executed": code_to_execute,
-                **state
-            }
+                "code_executed": code_to_execute
+            })
+            
+            return state
             
         except Exception as e:
-            state["python_node_output"] = {"error": str(e)}
-            return {
-                "type": "python",
+            error_msg = str(e)
+            if not state.node_outputs.get(self.node_name):
+                state.node_outputs[self.node_name] = {}
+            
+            state.node_outputs[self.node_name].update({
+                "error": error_msg,
                 "status": "error",
-                "error": str(e),
-                "code_executed": code if 'code' in locals() else "",
-                **state
-            } 
+                "code_executed": code if 'code' in locals() else ""
+            })
+            state.error = error_msg
+            return state 

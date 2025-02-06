@@ -1,5 +1,6 @@
 from typing import Dict, Any
 import aiohttp
+import json
 from ...schemas import APINodeData
 
 class APINode:
@@ -46,11 +47,20 @@ class APINode:
             # Replace placeholders in URL
             url = self._replace_placeholders(self.config.url, node_outputs, node_inputs)
 
+            # Replace placeholders in body (if body is provided)
+            body = None  # Default value if body is not provided
+            if self.config.body:
+                try:
+                    replaced_body = self._replace_placeholders(self.config.body, node_outputs, node_inputs)
+                    body = json.loads(replaced_body)  # Convert to dictionary if valid JSON
+                except json.JSONDecodeError:
+                    raise ValueError("Invalid JSON format in body")
             async with aiohttp.ClientSession() as session:
                 async with session.request(
                     method=self.config.method.upper(),
                     url=url,
-                    headers=headers
+                    headers=headers,
+                    json=body if body is not None else None  # Pass only if body exists
                 ) as response:
                     response_data = await response.json()
                     return {

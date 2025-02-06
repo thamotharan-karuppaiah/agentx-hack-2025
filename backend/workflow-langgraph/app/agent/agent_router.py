@@ -80,7 +80,6 @@ def init_llm():
          response_model=Execution,
          status_code=status.HTTP_201_CREATED)
 async def create_execution(request: CreateExecutionRequest, agent_id: str , db: Session = Depends(get_db)):
-
     current_time = datetime.now(timezone.utc)
     db_execution = ExecutionDB(
         status=ExecutionStatus.AGENT_IN_PROGRESS,
@@ -93,6 +92,9 @@ async def create_execution(request: CreateExecutionRequest, agent_id: str , db: 
         tool_state={},
         agent_id=agent_id
     )
+
+    db_execution.history = [{"type": "user", "content": request.trigger_input, "timestamp": current_time}]
+    
     db.add(db_execution)
     db.commit()
     db.refresh(db_execution)
@@ -136,20 +138,21 @@ async def create_and_invoke_agent(agent_id, trigger_input, execution_id, timesta
     else:
         execution_db = db_record
     execution = Execution.model_validate(execution_db)
-    input_message = {'type': 'human', 'content': trigger_input, 'timestamp': timestamp}
+    # input_message = {'type': 'human', 'content': trigger_input, 'timestamp': timestamp}
     message = generate_message(agent_response)
 
     history = execution.history
-    history.append(input_message)
+    # history.append(input_message)
     history.append(message)
 
     execution_db.history = history
+    execution_db.status = ExecutionStatus.IDLE
     db.commit()
     db.refresh(execution_db)
 
 def generate_message(agent_response):
     message = dict()
-    message['timestamp'] = agent_response['messages'][-1].response_metadata['timestamp']
+    message['timestamp'] = datetime.now(timezone.utc)
     message['content'] = agent_response['messages'][-1].content
 
     if type(agent_response['messages'][-1])==AIMessage:
@@ -184,11 +187,39 @@ async def continue_execution(request: CreateExecutionRequest, agent_id: str, exe
             detail="Execution not found"
         )
 
-    execution.last_run_at = datetime.now()
-    create_task(create_and_invoke_agent(agent_id, request.trigger_input,  execution_id, execution.last_run_at, False, execution, db))
+    current_time = datetime.now(timezone.utc)
+    execution.last_run_at = current_time
+    execution.status = ExecutionStatus.AGENT_IN_PROGRESS
+    
+    new_history = list(execution.history)
+    new_history.append({"type": "user", "content": request.trigger_input, "timestamp": current_time})
+    execution.history = new_history
+    
+    db.commit()
+    db.refresh(execution)
+    
+    create_task(create_and_invoke_agent(agent_id, request.trigger_input, execution_id, current_time, False, execution, db))
     return execution
 
-@router.get("/{agent_id}/executions")
-def get_executions_by_agent_id(agent_id: str, db: Session = Depends(get_db)):
+@router.get("/{agent_id}/executions",
+         response_model=List[Execution])
+async def get_executions_by_agent(agent_id: str, db: Session = Depends(get_db)):
     executions = db.query(ExecutionDB).filter(ExecutionDB.agent_id == agent_id).all()
+    if not executions:
+        return []
     return [Execution.model_validate(execution) for execution in executions]
+
+@router.delete("/{execution_id}",
+         response_model=dict)
+async def delete_execution(execution_id: str, db: Session = Depends(get_db)):
+    execution = db.query(ExecutionDB).filter(ExecutionDB.id == execution_id).first()
+    if not execution:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Execution not found"
+        )
+    
+    db.delete(execution)
+    db.commit()
+    
+    return {"message": "Execution deleted successfully"}

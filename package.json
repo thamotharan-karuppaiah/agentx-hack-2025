@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "tiptap-markdown": "^0.8.10"
+  }
+}

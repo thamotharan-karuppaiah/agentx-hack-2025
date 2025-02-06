@@ -1,7 +1,7 @@
 import { formatDistanceToNow } from 'date-fns';
 
 interface TaskHeaderProps {
-  title: string;
+  title?: string;
   triggeredBy: string;
   timestamp: string;
   content?: string;

@@ -11,14 +11,34 @@ import { agentExecutionService } from '@/services/agentExecutionService';
 import { useEffect, useRef } from 'react';
 
 interface TaskDetailsProps {
-  agent: Agent;
+  agent: Agent | null;
   selectedExec: AgentExecution | null;
   onEditClick: () => void;
-  onExecutionUpdate?: (execution: AgentExecution) => void;
+  onExecutionUpdate: (execution: AgentExecution) => void;
+  onRefreshExecutions: () => Promise<void>;
 }
 
-export const TaskDetails = ({ agent, selectedExec, onEditClick, onExecutionUpdate }: TaskDetailsProps) => {
+export const TaskDetails = ({ 
+  agent, 
+  selectedExec, 
+  onEditClick, 
+  onExecutionUpdate,
+  onRefreshExecutions 
+}: TaskDetailsProps) => {
   const pollingInterval = useRef<NodeJS.Timeout>();
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // Function to scroll to bottom
+  const scrollToBottom = () => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+    }
+  };
+
+  // Scroll to bottom when messages change
+  useEffect(() => {
+    scrollToBottom();
+  }, [selectedExec?.history]);
 
   const startPolling = () => {
     if (!selectedExec) return;
@@ -31,8 +51,8 @@ export const TaskDetails = ({ agent, selectedExec, onEditClick, onExecutionUpdat
           onExecutionUpdate(updatedExecution);
         }
 
-        // If execution is completed or failed, stop polling
-        if (updatedExecution.status === 'completed' || updatedExecution.status === 'failed') {
+        // Stop polling when execution is complete or idle
+        if (updatedExecution.status === 'CLOSED' || updatedExecution.status === 'IDLE') {
           stopPolling();
         }
       } catch (error) {
@@ -52,12 +72,88 @@ export const TaskDetails = ({ agent, selectedExec, onEditClick, onExecutionUpdat
   };
 
   useEffect(() => {
-    if (selectedExec?.status === 'running' || selectedExec?.status === 'pending') {
+    if (selectedExec?.status === 'AGENT_IN_PROGRESS' || selectedExec?.status === 'TOOL_IN_PROGRESS') {
       startPolling();
     }
 
     return () => stopPolling();
   }, [selectedExec?.id, selectedExec?.status]);
+
+  const handleInitialMessage = async (message: string) => {
+    if (!agent?.id) return;
+    
+    try {
+      // Create temporary execution with initial message
+      const tempExecution: AgentExecution = {
+        id: `temp-${Date.now()}`,
+        agentId: agent.id,
+        title: message.slice(0, 50), // Use first 50 chars as temp title
+        status: 'AGENT_IN_PROGRESS',
+        create_date: new Date().toISOString(),
+        last_run_at: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        triggered_by: '1',
+        history: [{
+          type: 'human',
+          content: message,
+          timestamp: new Date().toISOString()
+        }],
+        tool_state: {}
+      };
+
+      // Update UI immediately
+      onExecutionUpdate(tempExecution);
+
+      // Make actual API call
+      const newExecution = await agentExecutionService.createNewExecution(
+        agent.id,
+        message
+      );
+      
+      // Update with real execution data
+      onExecutionUpdate(newExecution);
+      await onRefreshExecutions();
+    } catch (error) {
+      console.error('Failed to create task:', error);
+    }
+  };
+
+  const handleContinueChat = async (message: string) => {
+    if (!agent?.id || !selectedExec?.id) return;
+
+    try {
+      // Create temporary message in current execution
+      const tempExecution: AgentExecution = {
+        ...selectedExec,
+        status: 'AGENT_IN_PROGRESS',
+        last_run_at: new Date().toISOString(),
+        history: [
+          ...selectedExec.history,
+          {
+            type: 'human',
+            content: message,
+            timestamp: new Date().toISOString()
+          }
+        ]
+      };
+
+      // Update UI immediately
+      onExecutionUpdate(tempExecution);
+
+      // Make actual API call
+      const updatedExecution = await agentExecutionService.continueExecution(
+        agent.id,
+        selectedExec.id,
+        message
+      );
+
+      // Update with real execution data
+      onExecutionUpdate(updatedExecution);
+      await onRefreshExecutions();
+    } catch (error) {
+      console.error('Failed to continue chat:', error);
+    }
+  };
 
   return (
     <div className="flex flex-col justify-start w-full h-full bg-background-secondary">
@@ -112,15 +208,22 @@ export const TaskDetails = ({ agent, selectedExec, onEditClick, onExecutionUpdat
       <div className="w-full flex flex-1 min-h-0 xl:pl-0 pr-2 pt-0 bg-white">
         {/* Center Content */}
         <div className="flex-grow h-full flex flex-col elevation-raw-bulge bg-background-primary relative xl:rounded-r-none border border-t-0 border-border-default">
-          <div className="h-full overflow-y-auto flex-grow flex flex-col px-m py-m 2xl:py-xl items-center hide-scroll-bar" id="scroll-container">
+          <div 
+            ref={scrollContainerRef}
+            className="h-full overflow-y-auto flex-grow flex flex-col px-m py-m 2xl:py-xl items-center hide-scroll-bar" 
+            id="scroll-container"
+          >
             {selectedExec ? (
-              <ChatHistory execution={selectedExec} />
+              <ChatHistory execution={selectedExec} agent={agent} />
             ) : (
               agent && <EmptyState agent={agent} />
             )}
             <div className="sticky z-40 w-full px-xxs py-m bg-gradient-to-t from-white via-white via-90% to-transparent -bottom-xl">
               <div className="relative">
-                <ChatInput onSubmit={() => { }} />
+                <ChatInput 
+                  onSubmit={selectedExec ? handleContinueChat : handleInitialMessage}
+                  placeholder={selectedExec ? "Type a message..." : "Start a new task..."}
+                />
               </div>
             </div>
           </div>
@@ -137,7 +240,7 @@ export const TaskDetails = ({ agent, selectedExec, onEditClick, onExecutionUpdat
         <footer className="w-full flex items-center justify-center border border-t-0 rounded-b-sm border-border-default bg-background-primary h-[33px]">
           <div className="hidden lg:inline-flex">
             <span className="text-muted-foreground text-sm">
-              Last updated {formatDistanceToNow(new Date(agent?.lastModified || agent?.created), { addSuffix: true })}
+              Last updated {formatDistanceToNow(new Date(selectedExec?.last_run_at || new Date().toISOString()), { addSuffix: true })}
             </span>
           </div>
         </footer>

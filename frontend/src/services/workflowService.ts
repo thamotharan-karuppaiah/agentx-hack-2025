@@ -4,10 +4,12 @@ import type { Workflow, CreateWorkflowPayload, WorkflowConfig } from '@/features
 // Add headers configuration
 const headers = {
     'x-user-id': '1',
-    'x-workspace-id': '1'
+    'x-workspace-id': '1',
+    'ngrok-skip-browser-warning': 'false'
 };
 
 const BASE_URL = 'http://localhost:8096/workflow-service/v1';
+// const BASE_URL = 'https://0a50-182-73-13-166.ngrok-free.app/workflow-service/v1';
 
 // // Mock data for development
 // const mockWorkflows: Workflow[] = [

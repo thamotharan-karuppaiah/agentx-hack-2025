@@ -4,7 +4,7 @@ import { agentService } from '@/services/agentService';
 import { useToast } from '@/hooks/use-toast';
 import type { Agent } from './types';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Plus, Filter, Search, ArrowLeft, BotIcon } from 'lucide-react';
+import { Plus, Filter, Search, ArrowLeft, BotIcon, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
@@ -31,6 +31,10 @@ interface QueueGroup {
   name: string;
   status: 'active' | 'finished';
   items: QueueItem[];
+}
+
+interface TaskDetailsProps {
+  onRefreshExecutions: () => Promise<void>;
 }
 
 export default function AgentDetails() {
@@ -76,27 +80,22 @@ export default function AgentDetails() {
     fetchData();
   }, [agentId]);
 
-  const handleCreateTask = async () => {
-    if (!agentId) return;
-    try {
-      const newExecution = await agentExecutionService.createExecution(
-        agentId,
-        'New Task'
-      );
-      setExecutions(prev => [newExecution, ...prev]);
-      setSelectedExecution(newExecution.id);
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to create task",
-        variant: "destructive",
-      });
-    }
+  const handleCreateTask = () => {
+    setSelectedExecution(null);
   };
 
-  const filteredExecutions = executions.filter(execution =>
-    execution.title.toLowerCase().includes(searchQuery.toLowerCase())
+  // Sort executions by create_date in descending order
+  const sortedExecutions = [...executions].sort((a, b) => 
+    new Date(b.create_date).getTime() - new Date(a.create_date).getTime()
   );
+
+  // Use sortedExecutions for filtering
+  const filteredExecutions = searchQuery 
+    ? sortedExecutions.filter(execution =>
+        execution.history[0]?.content?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        execution.title?.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : sortedExecutions;
 
   const refreshAgentData = async () => {
     if (!agentId) return;
@@ -125,9 +124,55 @@ export default function AgentDetails() {
   };
 
   const handleExecutionUpdate = (updatedExecution: AgentExecution) => {
-    setExecutions(prev => prev.map(exec => 
-      exec.id === updatedExecution.id ? updatedExecution : exec
-    ));
+    setExecutions(prev => {
+      const existingIndex = prev.findIndex(exec => exec.id === updatedExecution.id);
+      
+      if (existingIndex >= 0) {
+        // Update existing execution
+        const newExecutions = [...prev];
+        newExecutions[existingIndex] = updatedExecution;
+        return newExecutions;
+      } else {
+        // Add new execution to the beginning of the list
+        return [updatedExecution, ...prev];
+      }
+    });
+    
+    // Select the new/updated execution
+    setSelectedExecution(updatedExecution.id);
+  };
+
+  const handleDeleteExecution = async (executionId: string) => {
+    try {
+      await agentExecutionService.deleteExecution(executionId);
+      // Remove the execution from state
+      setExecutions(prev => prev.filter(exec => exec.id !== executionId));
+      // Clear selection if deleted execution was selected
+      if (selectedExecution === executionId) {
+        setSelectedExecution(null);
+      }
+      toast({
+        title: "Success",
+        description: "Task deleted successfully",
+      });
+    } catch (error) {
+      console.error('Failed to delete execution:', error);
+      toast({
+        title: "Error",
+        description: "Failed to delete task",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const refreshExecutions = async () => {
+    if (!agentId) return;
+    try {
+      const executionsData = await agentExecutionService.getExecutions(agentId);
+      setExecutions(executionsData);
+    } catch (error) {
+      console.error('Failed to fetch executions:', error);
+    }
   };
 
   if (loading) {
@@ -268,34 +313,52 @@ export default function AgentDetails() {
                   {filteredExecutions.length > 0 ? (
                     <div className="space-y-1">
                       {filteredExecutions.map(execution => (
-                        <button
+                        <div
                           key={execution.id}
-                          className={cn(
-                            "w-full text-left p-3 rounded-md transition-colors",
-                            "hover:bg-accent/30 hover:border-border-hover",
-                            "border border-transparent",
-                            selectedExecution === execution.id 
-                              ? "bg-accent/40 border-border-hover shadow-sm" 
-                              : "bg-transparent"
-                          )}
-                          onClick={() => handleTaskClick(execution.id)}
+                          className="relative group"
                         >
-                          <div className="flex items-center justify-between gap-2">
-                            <span className={cn(
-                              "text-sm truncate",
+                          <button
+                            className={cn(
+                              "w-full text-left p-3 rounded-md transition-colors",
+                              "hover:bg-accent/30 hover:border-border-hover",
+                              "border border-transparent",
                               selectedExecution === execution.id 
-                                ? "text-foreground font-medium" 
-                                : "text-muted-foreground"
-                            )}>
-                              {execution.title}
-                            </span>
-                            <div className="shrink-0 text-right">
-                              <span className="text-xs text-muted-foreground">
-                                {formatDistanceToNow(new Date(execution.createdAt), { addSuffix: true })}
+                                ? "bg-accent/40 border-border-hover shadow-sm" 
+                                : "bg-transparent"
+                            )}
+                            onClick={() => handleTaskClick(execution.id)}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className={cn(
+                                "text-sm truncate",
+                                selectedExecution === execution.id 
+                                  ? "text-foreground font-medium" 
+                                  : "text-muted-foreground"
+                              )}>
+                                {execution.history[0]?.content || execution.title || "Untitled"}
                               </span>
+                              <div className="shrink-0 text-right">
+                                <span className="text-xs text-muted-foreground">
+                                  {formatDistanceToNow(new Date(execution.create_date), { addSuffix: true })}
+                                </span>
+                              </div>
                             </div>
-                          </div>
-                        </button>
+                          </button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className={cn(
+                              "absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity",
+                              "h-7 w-7"
+                            )}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteExecution(execution.id);
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        </div>
                       ))}
                     </div>
                   ) : (
@@ -346,6 +409,7 @@ export default function AgentDetails() {
           selectedExec={selectedExec}
           onEditClick={() => setEditModalOpen(true)}
           onExecutionUpdate={handleExecutionUpdate}
+          onRefreshExecutions={refreshExecutions}
         />
       )}
 

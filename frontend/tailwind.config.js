@@ -94,7 +94,7 @@ export default {
 			}
   	}
   },
-  plugins: [tailwindcssAnimate],
+  plugins: [tailwindcssAnimate, require('@tailwindcss/typography')],
   variants: {
     extend: {
       opacity: ['group-hover'],

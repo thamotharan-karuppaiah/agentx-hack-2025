@@ -92,10 +92,10 @@ async def create_execution(request: CreateExecutionRequest, agent_id: str , db: 
     db.add(db_execution)
     db.commit()
     db.refresh(db_execution)
-    await create_and_invoke_agent(agent_id, request.trigger_input,  db_execution.id, current_time, db)
+    await create_and_invoke_agent(agent_id, request.trigger_input,  db_execution.id, current_time, True, None, db)
     return Execution.model_validate(db_execution)
 
-async def create_and_invoke_agent(agent_id, trigger_input, execution_id, timestamp, db: Session = Depends(get_db)):
+async def create_and_invoke_agent(agent_id, trigger_input, execution_id, timestamp, call_db_again, db_record, db: Session = Depends(get_db)):
     headers = {
         "x-workspace-id": "1",
         "x-user-id": "1"
@@ -114,14 +114,23 @@ async def create_and_invoke_agent(agent_id, trigger_input, execution_id, timesta
     ]  # todo: fetch tools from api call and add it here
 
     pre_built_agent = create_react_agent(model=llm, prompt=response_data["systemPrompt"], tools=[])
-    messages = {"messages": [("user", trigger_input)]}
+    input_messages = []
+    if db_record:
+        for record in db_record.history:
+            input_messages.append(tuple([record['type'], record['content']]))
+
+    input_messages.append(("user", trigger_input))
+    messages = {"messages": input_messages}
 
     # Pass the necessary variables as a dictionary
     agent_response = pre_built_agent.invoke(messages)
     # todo: add other columns when tool calling or other things are in response
 
 
-    execution_db = db.query(ExecutionDB).filter(ExecutionDB.id == execution_id).first()
+    if call_db_again:
+        execution_db = db.query(ExecutionDB).filter(ExecutionDB.id == execution_id).first()
+    else:
+        execution_db = db_record
     execution = Execution.model_validate(execution_db)
     input_message = {'type': 'human', 'content': trigger_input, 'timestamp': timestamp}
     message = generate_message(agent_response)
@@ -140,7 +149,7 @@ def generate_message(agent_response):
     message['content'] = agent_response['messages'][-1].content
 
     if type(agent_response['messages'][-1])==AIMessage:
-        message['type'] = 'agent'
+        message['type'] = 'assistant'
     elif type(agent_response['messages'][-1])==HumanMessage:
         message['type'] = 'user'
     elif type(agent_response['messages'][-1])==ToolMessage:
@@ -162,59 +171,16 @@ async def get_execution(execution_id: str, db: Session = Depends(get_db)):
         )
     return Execution.model_validate(execution)
 
-
-@router.post("/{agent_id}/{execution_id}/continueChat",
+@router.post("/{agent_id}/continueChat/{execution_id}",
           response_model=Execution)
-async def continue_execution(execution_id: str, db: Session = Depends(get_db)):
-    execution = db.query(ExecutionDB).filter(ExecutionDB.execution_id == execution_id).first()
+async def continue_execution(request: CreateExecutionRequest, agent_id: str, execution_id: str, db: Session = Depends(get_db)):
+    execution = db.query(ExecutionDB).filter(ExecutionDB.id == execution_id).first()
     if not execution:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Execution not found"
         )
 
-    if execution.status in [ExecutionStatus.COMPLETED, ExecutionStatus.FAILED]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot continue execution in {execution.status} state"
-        )
-
-    try:
-        # Update status to IN_PROGRESS
-        execution.status = ExecutionStatus.IN_PROGRESS
-        execution.last_run_at = datetime.now()
-        execution.history += f"\nExecution continued at {execution.last_run_at}"
-
-        # Process the execution
-        await process_execution(execution)
-
-        # Update status to COMPLETED
-        execution.status = ExecutionStatus.COMPLETED
-        execution.last_run_at = datetime.now()
-        execution.history += f"\nExecution completed at {execution.last_run_at}"
-
-        db.commit()
-        db.refresh(execution)
-        return execution
-
-    except Exception as e:
-        execution.status = ExecutionStatus.FAILED
-        execution.last_run_at = datetime.now()
-        execution.history += f"\nExecution failed at {execution.last_run_at}: {str(e)}"
-        db.commit()
-
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
-
-
-async def process_execution(execution: ExecutionDB) -> None:
-    """
-    Process the execution. Replace this with your actual business logic.
-    """
-    from asyncio import sleep
-    await sleep(1)  # Simulate some async work
-
-    # Update tool state with some sample data
-    execution.tool_state = '{"processing_status": "completed", "results": "sample_output"}'
+    execution.last_run_at = datetime.now()
+    await create_and_invoke_agent(agent_id, request.trigger_input,  execution_id, execution.last_run_at, False, execution, db)
+    return execution

@@ -9,10 +9,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { 
-  Zap, 
-  History, 
-  BarChart2, 
+import {
+  Zap,
+  History,
+  BarChart2,
   Grid,
   Pencil,
   MoreVertical,
@@ -54,12 +54,13 @@ import {
 import { useSearchParams, useNavigate, useParams } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { WorkflowTemplateModal } from './components/WorkflowTemplateModal';
-
+import { ToolsEmptyState } from './components/empty-states/ToolsEmptyState';
+import { WorkflowTemplate } from './data/workflowTemplates';
 const WorkflowMain: React.FC = () => {
   const [loading, setLoading] = useState(false);
-  const [sortConfig, setSortConfig] = useState<SortConfig>({ 
-    key: null, 
-    direction: 'asc' 
+  const [sortConfig, setSortConfig] = useState<SortConfig>({
+    key: null,
+    direction: 'asc'
   });
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [, setSelectedWorkflowForSheets] = useState<string | null>(null);
@@ -154,8 +155,8 @@ const WorkflowMain: React.FC = () => {
     return (
       <Popover>
         <PopoverTrigger asChild>
-          <Button 
-            variant="ghost" 
+          <Button
+            variant="ghost"
             className="px-3 h-7 rounded-full hover:bg-background border border-green-200 bg-green-50"
             onClick={(e) => {
               e.stopPropagation();
@@ -180,8 +181,8 @@ const WorkflowMain: React.FC = () => {
             ) : (
               <div className="p-1">
                 {linkedSheets.map(sheet => (
-                  <div 
-                    key={sheet.id} 
+                  <div
+                    key={sheet.id}
                     className="flex items-center gap-2 p-2 hover:bg-gray-50 rounded-md cursor-pointer"
                   >
                     <Grid className="w-4 h-4 text-orange-400" />
@@ -258,7 +259,7 @@ const WorkflowMain: React.FC = () => {
             </>
           )}
           <DropdownMenuSeparator />
-          <DropdownMenuItem 
+          <DropdownMenuItem
             className="gap-2 text-red-600 focus:text-red-600 focus:bg-red-50"
             onClick={(e) => handleDeleteWorkflow(e, workflow)}
             disabled={isDeleting}
@@ -274,9 +275,9 @@ const WorkflowMain: React.FC = () => {
   const handleSort = (key: keyof Workflow) => {
     setSortConfig(current => ({
       key,
-      direction: 
-        current.key === key && current.direction === 'asc' 
-          ? 'desc' 
+      direction:
+        current.key === key && current.direction === 'asc'
+          ? 'desc'
           : 'asc',
     }));
   };
@@ -287,9 +288,9 @@ const WorkflowMain: React.FC = () => {
     return [...workflows].sort((a, b) => {
       const aValue = a[sortConfig.key!];
       const bValue = b[sortConfig.key!];
-      
+
       if (!aValue || !bValue) return 0;
-      
+
       if (aValue < bValue) {
         return sortConfig.direction === 'asc' ? -1 : 1;
       }
@@ -301,7 +302,7 @@ const WorkflowMain: React.FC = () => {
   };
 
   const renderSortableHeader = (
-    label: string, 
+    label: string,
     key: keyof Workflow
   ) => (
     <div
@@ -360,7 +361,7 @@ const WorkflowMain: React.FC = () => {
 
   const handleFilterChange = (key: keyof WorkflowFilters, value: any) => {
     const currentFilters = { ...filters };
-    
+
     if (value === undefined || value === '') {
       delete currentFilters[key];
     } else {
@@ -373,7 +374,7 @@ const WorkflowMain: React.FC = () => {
     } else {
       delete newParams.filters;
     }
-    
+
     setSearchParams(newParams);
   };
 
@@ -405,8 +406,8 @@ const WorkflowMain: React.FC = () => {
   const renderFilters = () => (
     <Popover open={filterOpen} onOpenChange={setFilterOpen}>
       <PopoverTrigger asChild>
-        <Button 
-          variant="outline" 
+        <Button
+          variant="outline"
           className="gap-2"
           aria-label="Filter workflows"
         >
@@ -466,9 +467,9 @@ const WorkflowMain: React.FC = () => {
             </div>
           </div>
           {Object.keys(filters).length > 0 && (
-            <Button 
-              variant="ghost" 
-              size="sm" 
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={clearFilters}
               className="w-full"
             >
@@ -489,11 +490,15 @@ const WorkflowMain: React.FC = () => {
   };
 
   const renderContent = useCallback(() => {
+    if (workflows.length === 0) {
+      return <ToolsEmptyState onHandleCreateTool={handleCreateWorkflow} />;
+    }
+
     return (
       <div className="space-y-4">
         <div className="flex justify-end items-center gap-4">
           {isInIframe && (
-            <Button 
+            <Button
               onClick={handleCreateWorkflow}
               className="shrink-0"
             >
@@ -538,8 +543,8 @@ const WorkflowMain: React.FC = () => {
                 renderTableSkeleton()
               ) : (
                 getSortedWorkflows(getFilteredWorkflows(getSearchedWorkflows(workflows))).map((workflow) => (
-                  <TableRow 
-                    key={workflow.id} 
+                  <TableRow
+                    key={workflow.id}
                     className="cursor-pointer"
                     onClick={() => handleWorkflowClick(workflow)}
                   >
@@ -574,7 +579,7 @@ const WorkflowMain: React.FC = () => {
 
   const getSearchedWorkflows = (workflows: Workflow[]) => {
     if (!searchQuery) return workflows;
-    return workflows.filter(workflow => 
+    return workflows.filter(workflow =>
       workflow.name.toLowerCase().includes(searchQuery.toLowerCase())
     );
   };
@@ -583,13 +588,13 @@ const WorkflowMain: React.FC = () => {
     setTemplateModalOpen(true);
   }, []);
 
-  const handleTemplateSelect = async (templateId: string) => {
+  const handleTemplateSelect = async (template: WorkflowTemplate) => {
     setTemplateModalOpen(false);
-    if (templateId === 'blank') {
-      let workflow = await workflowService.createWorkflow({name:''});
+    if (template.id === 'blank') {
+      let workflow = await workflowService.createWorkflow({ name: '' });
       navigate(`${workflow.id}/edit`);
     } else {
-      let workflow = await workflowService.createWorkflow({name:''});
+      let workflow = await workflowService.createWorkflow({ name: template.title, description: template.description });
       navigate(`${workflow.id}/edit`);
     }
   };
@@ -631,7 +636,7 @@ const WorkflowMain: React.FC = () => {
         </div>
       </div>
 
-      <WorkflowTemplateModal 
+      <WorkflowTemplateModal
         open={templateModalOpen}
         onOpenChange={setTemplateModalOpen}
         onTemplateSelect={handleTemplateSelect}

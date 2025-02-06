@@ -4,18 +4,22 @@ from fastapi import FastAPI, HTTPException, status, Depends, APIRouter
 
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
 from langgraph.prebuilt import create_react_agent
-from sqlalchemy import create_engine, Column, String, DateTime, Enum as SQLAEnum, JSON, Integer, Identity
+from sqlalchemy import create_engine, Column, String, DateTime, Enum as SQLAEnum, JSON, Integer, Identity, Text
 from sqlalchemy.orm import sessionmaker, Session, declarative_base, Mapped
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, create_model
 from datetime import datetime, timezone
-from typing import Optional, Any, List, Dict
-from langchain_core.tools import Tool
+from typing import Optional, Any, List, Dict, Type, Union
+from langchain_openai import ChatOpenAI
+from langchain_core.tools import Tool, BaseTool
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, PromptTemplate
 from enum import StrEnum
 import os
 import requests
+import httpx
 from asyncio import create_task
+import asyncio
 
+from app.config import settings
 from app.database import get_db
 from cloudverse.cloudverse_openai import CloudverseChat
 
@@ -70,11 +74,166 @@ def format_tool_for_prompt(tool: Tool) -> str:
     """Format a tool for inclusion in the prompt."""
     return f"- {tool.name}: {tool.description}"
 
+class ExtendedCloudverseChat(CloudverseChat):
+    def bind_tools(self, tools):
+        """Implement bind_tools method required by langgraph."""
+        # Create a new instance with the same parameters but with tools bound
+        new_instance = self.clone()
+        new_instance.tools = tools
+        return new_instance
+
+    def clone(self):
+        """Create a copy of the current instance."""
+        return ExtendedCloudverseChat(
+            proxy_url=self.proxy_url,
+            auth_token=self.auth_token,
+            model_name=self.model_name,
+            temperature=self.temperature
+        )
+
 def init_llm():
     PROXY_URL = 'https://cloudverse.freshworkscorp.com'
     PROXY_TOKEN = 'eyJhbGciOiJIUzI1NiJ9.eyJ1c2VyIjp7Im5hbWUiOiJSYW1yYXRhbiBKYXZhIiwiZW1haWwiOiJyYW1yYXRhbi5qYXZhQGZyZXNod29ya3MuY29tIiwiaW1hZ2UiOiJodHRwczovL2xoMy5nb29nbGV1c2VyY29udGVudC5jb20vYS9BQ2c4b2NJSGNkaFNnTTFFTW1obDAweXdwMmpjaWEtQ0pzQkQwTUE4NzhsZG1BYmN3YWswSnc9czk2LWMiLCJpZCI6IjY3YTIwY2EzMGUyNThhNjc4OTU4YmJmMSJ9LCJleHBpcmVzIjoiMjAyNS0wMi0wNFQxNDo1MzoxMS4wMDlaIiwianRpIjoiR1E1dGhiTExxZU9DbGpLNVMwU0ZUIiwiaWF0IjoxNzM4NjczNTk2LCJleHAiOjE3MzkyNzgzOTZ9.Vxd9MVeKbTsTg7DhJ5g39-65PCXslAd6RAi4TZTyeHw'
-    llm = CloudverseChat(proxy_url=PROXY_URL, auth_token=PROXY_TOKEN, model_name='Azure-GPT-4o', temperature=0.7)
+    llm = ExtendedCloudverseChat(proxy_url=PROXY_URL, auth_token=PROXY_TOKEN, model_name='Azure-GPT-4o', temperature=0.7)
     return llm
+
+def init_tools_definition(response_data):
+    """Initialize tool definitions from response data and fetch their configurations."""
+    tools = []
+    
+    for tool in response_data.get("tools", []):
+        headers = {
+            "x-workspace-id": "1",
+            "x-user-id": "1"
+        }
+        
+        try:
+            response = requests.get(
+                f"http://localhost:8096/workflow-service/v1/workflows/{tool['id']}", 
+                headers=headers
+            )
+            response.raise_for_status()
+            tool_config = response.json()
+            
+            # Create a dynamic Pydantic model for the tool parameters
+            field_definitions = {}
+            
+            # Find start node in the config
+            start_node = next(
+                (node for node in tool_config["config"]["nodes"] 
+                if node["type"] == "start" or node["id"] == "start"),
+                None
+            )
+            
+            if start_node and "data" in start_node:
+                for group in start_node["data"].get("groups", []):
+                    for field in group.get("fields", []):
+                        field_name = field.get("variableName", "")
+                        if field_name:
+                            # Map field type to Python type
+                            field_type = str  # Default to string
+                            if field.get("type") == "number":
+                                field_type = float
+                            elif field.get("type") == "integer":
+                                field_type = int
+                            elif field.get("type") == "boolean":
+                                field_type = bool
+                            
+                            # Add description to the field
+                            description = field.get("label", f"Parameter {field_name}")
+                            
+                            # Create field with proper type annotation and description
+                            if field.get("required", False):
+                                field_definitions[field_name] = (
+                                    field_type, 
+                                    Field(
+                                        ...,  # ... means required
+                                        description=description
+                                    )
+                                )
+                            else:
+                                field_definitions[field_name] = (
+                                    Optional[field_type], 
+                                    Field(
+                                        None,
+                                        description=description
+                                    )
+                                )
+
+            print(f"Creating tool model for {tool['id']} with fields:", field_definitions)
+            
+            # Create dynamic Pydantic model using create_model
+            tool_args_model = create_model(
+                f"{tool['id']}Args",
+                __config__=type('Config', (), {
+                    'extra': 'forbid',
+                    'title': f"{tool['name']} Arguments",
+                    'description': tool.get("prompt", f"Arguments for {tool['name']} workflow")
+                }),
+                **field_definitions
+            )
+            
+            # Print the schema to verify
+            print(f"Generated schema for {tool['id']}:", tool_args_model.model_json_schema())
+            
+            async def tool_func(**kwargs):
+                print(f"Executing tool {tool['id']} with args:", kwargs)  # Debug print
+                async with httpx.AsyncClient() as client:
+                    try:
+                        response = await client.post(
+                            f"http://localhost:8096/workflows/{tool['id']}/sync",
+                            json={"initial_inputs": kwargs},
+                            headers={
+                                "x-workspace-id": "1",
+                                "x-user-id": "1"
+                            }
+                        )
+                        response.raise_for_status()
+                        result = response.json()
+                        # Format the result to match the expected tool response structure
+                        formatted_result = {
+                            "status": "success",
+                            "result": result.get("result", {}),
+                            "timestamp": datetime.utcnow().isoformat()
+                        }
+                        return formatted_result
+                    except httpx.HTTPError as e:
+                        error_message = f"Error executing workflow {tool['id']}: {str(e)}"
+                        return {
+                            "status": "error",
+                            "error": error_message,
+                            "timestamp": datetime.utcnow().isoformat()
+                        }
+            
+            # Modified sync wrapper function
+            def sync_tool_func(**kwargs):
+                # Create a new event loop if there isn't one
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                
+                # Run the async function and return its result
+                return loop.run_until_complete(tool_func(**kwargs))
+            
+            tool_func = sync_tool_func
+            
+            # Create the Tool object
+            tool_obj = Tool(
+                name=tool["id"],
+                description=tool.get("prompt", f"Executes the {tool['name']} workflow"),
+                func=tool_func,
+                args_schema=tool_args_model
+            )
+            
+            tools.append(tool_obj)
+            
+        except Exception as e:
+            print(f"Error creating tool {tool['id']}: {str(e)}")
+            continue
+    
+    return tools
 
 @router.post("/{agent_id}/createExecution",
          response_model=Execution,
@@ -111,15 +270,9 @@ async def create_and_invoke_agent(agent_id, trigger_input, execution_id, timesta
     response.raise_for_status()
     response_data = json.loads(response.text)
     llm = init_llm()
-    tools = [
-        Tool(
-            name="answer question",
-            func=addition,
-            description="use the tool"
-        )
-    ]  # todo: fetch tools from api call and add it here
-
-    pre_built_agent = create_react_agent(model=llm, prompt=response_data["systemPrompt"], tools=[])
+    tools_definition = init_tools_definition(response_data);
+    
+    pre_built_agent = create_react_agent(model=llm, prompt=response_data["systemPrompt"], tools=tools_definition)
     input_messages = []
     if db_record:
         for record in db_record.history:

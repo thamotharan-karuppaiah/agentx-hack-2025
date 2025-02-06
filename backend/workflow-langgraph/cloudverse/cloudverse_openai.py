@@ -73,10 +73,34 @@ class CloudverseChat(BaseChatModel):
                 msg_dict["name"] = message.name
 
             if hasattr(message, "additional_kwargs"):
-                msg_dict.update(message.additional_kwargs)
+                # Filter out non-serializable objects from additional_kwargs
+                serializable_kwargs = {
+                    k: v for k, v in message.additional_kwargs.items() 
+                    if not callable(v)  # Exclude function objects
+                }
+                msg_dict.update(serializable_kwargs)
 
             converted_messages.append(msg_dict)
             self.chat_history.append(msg_dict)
+
+        # Convert tools to a serializable format, excluding callback functions
+        serializable_tools = []
+        for tool in self.tools:
+            if isinstance(tool, dict):
+                # Create a copy of the tool dict without any function references
+                tool_copy = {
+                    "toolName": tool["toolName"],
+                    "description": tool["description"],
+                    "parameters": tool["parameters"]
+                }
+                serializable_tools.append(tool_copy)
+            else:
+                # Convert Tool object to dict
+                serializable_tools.append({
+                    "toolName": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.args_schema.schema() if hasattr(tool, 'args_schema') and tool.args_schema else {}
+                })
 
         payload = {
             "messages": converted_messages,
@@ -88,8 +112,8 @@ class CloudverseChat(BaseChatModel):
             "stop": [],
             "maxTokens": self.max_tokens,
             "toolChoice": self.tool_choice,
-            "tools": self.tools,
-            "stream": self.stream
+            "tools": serializable_tools
+            # "stream": self.stream
         }
 
         return payload
@@ -140,12 +164,24 @@ class CloudverseChat(BaseChatModel):
             "timestamp": datetime.utcnow().isoformat(),
         }
 
-        if tool_name in self.tool_callbacks:
+        # Find the matching tool - looking for Tool objects by checking name attribute
+        matching_tool = next((tool for tool in self.tools if 
+                            hasattr(tool, "name") and tool.name == tool_name), None)
+
+        if matching_tool:
             try:
-                result = self.tool_callbacks[tool_name](args.get("input", ""))
-                tool_response["status"] = "success"
-                tool_response["result"] = str(result)
-                return str(result), tool_response
+                # Execute the tool function with the arguments
+                result = matching_tool.func(**args)
+                
+                # Handle the result
+                if isinstance(result, dict) and "status" in result:
+                    tool_response.update(result)
+                else:
+                    tool_response["status"] = "success"
+                    tool_response["result"] = str(result)
+                
+                return str(tool_response.get("result", "")), tool_response
+                
             except Exception as e:
                 error_msg = f"Error executing tool {tool_name}: {str(e)}"
                 tool_response["status"] = "error"
@@ -170,7 +206,9 @@ class CloudverseChat(BaseChatModel):
             "Content-Type": "application/json"
         }
 
+        print(f"messages: {messages}")
         payload = self._convert_messages_to_cloudverse_format(messages)
+        print(f"payload: {payload}")
         if stop:
             payload["stop"] = stop
 
@@ -181,8 +219,29 @@ class CloudverseChat(BaseChatModel):
                 json=payload,
                 timeout=self.request_timeout
             )
-            response.raise_for_status()
-            response_data = response.json()
+            print(f"response status: {response.status_code}")
+            print(f"response text: {response.text}")
+            
+            # Check if response is successful
+            if response.status_code != 200:
+                error_msg = f"Proxy request failed with status {response.status_code}: {response.text}"
+                raise requests.RequestException(error_msg)
+
+            # Try to parse as JSON first
+            try:
+                response_data = response.json()
+            except json.JSONDecodeError:
+                # If not JSON, treat as plain text response
+                response_data = {
+                    "text": response.text,
+                    "finish_reason": "stop",
+                    "usage": {},
+                    "model": self.model_name,
+                }
+
+            if not response_data and not response.text:
+                error_msg = "Empty response from proxy"
+                raise requests.RequestException(error_msg)
 
             # Process tool calls if any
             tool_calls = response_data.get("toolCalls", [])
@@ -207,16 +266,29 @@ class CloudverseChat(BaseChatModel):
                     json=payload,
                     timeout=self.request_timeout
                 )
-                response.raise_for_status()
-                final_response_data = response.json()
+                
+                if response.status_code != 200:
+                    error_msg = f"Tool response request failed with status {response.status_code}: {response.text}"
+                    raise requests.RequestException(error_msg)
 
-                # If the final response also has tool calls, use the last tool result as the response
-                if final_response_data.get("toolCalls"):
-                    final_response_data["text"] = tool_outputs[-1]["result"]
+                try:
+                    final_response_data = response.json()
+                except json.JSONDecodeError:
+                    final_response_data = {
+                        "text": response.text,
+                        "finish_reason": "stop",
+                        "usage": {},
+                        "model": self.model_name,
+                    }
+
+            # Get content from the final response
+            content = final_response_data.get("text", "") or final_response_data.get("content", "")
+            if not content and tool_outputs:
+                content = tool_outputs[-1].get("result", "No response generated")
 
             # Create generation info
             generation_info = {
-                "finish_reason": final_response_data.get("finish_reason"),
+                "finish_reason": final_response_data.get("finish_reason", "stop"),
                 "logprobs": final_response_data.get("logprobs"),
                 "token_usage": final_response_data.get("usage", {}),
                 "model": final_response_data.get("model", self.model_name),
@@ -244,11 +316,6 @@ class CloudverseChat(BaseChatModel):
                 "api_version": final_response_data.get("api_version"),
                 "timestamp": datetime.utcnow().isoformat(),
             }
-
-            # Get content from the final response or the last tool result
-            content = final_response_data.get("text", "")
-            if not content and tool_outputs:
-                content = tool_outputs[-1]["result"]
 
             # Create the message and generation
             message = AIMessage(
@@ -279,6 +346,11 @@ class CloudverseChat(BaseChatModel):
 
         except requests.RequestException as e:
             error_msg = f"Proxy request failed: {str(e)}"
+            print(f"Error in _generate: {error_msg}")
+            raise requests.RequestException(error_msg) from e
+        except Exception as e:
+            error_msg = f"Unexpected error in _generate: {str(e)}"
+            print(f"Unexpected error: {error_msg}")
             raise requests.RequestException(error_msg) from e
 
     @property

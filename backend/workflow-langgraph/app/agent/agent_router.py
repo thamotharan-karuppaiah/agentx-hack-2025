@@ -1,8 +1,9 @@
 import json
 
 from fastapi import FastAPI, HTTPException, status, Depends, APIRouter
-from langchain.agents import create_react_agent
+
 from langchain_core.messages import HumanMessage, SystemMessage
+from langgraph.prebuilt import create_react_agent
 from sqlalchemy import create_engine, Column, String, DateTime, Enum as SQLAEnum, JSON, Integer, Identity
 from sqlalchemy.orm import sessionmaker, Session, declarative_base, Mapped
 from pydantic import BaseModel
@@ -94,29 +95,12 @@ async def create_execution(request: CreateExecutionRequest, agent_id: str , db: 
         )
     ] # todo: fetch tools from api call and add it here
 
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            SystemMessage(content=response_data["systemPrompt"]),
-            SystemMessage(content="You have access to the following tools:\n{tools}"),
-            MessagesPlaceholder(variable_name="tools"),
-            MessagesPlaceholder(variable_name="tool_names"),
-            HumanMessage(content="{input}"),
-            MessagesPlaceholder(variable_name="agent_scratchpad")
-        ]
-    )
-    pre_built_agent = create_react_agent(llm=llm, prompt=prompt,tools=tools)
-    messages = [
-        HumanMessage(content=request.trigger_input)
-    ]
+
+    pre_built_agent = create_react_agent(model=llm, prompt=response_data["systemPrompt"],tools=[])
+    messages = {"messages": [("user", request.trigger_input)]}
 
     # Pass the necessary variables as a dictionary
-    agent_response = pre_built_agent.invoke({
-        "input": request.trigger_input,
-        "tools": tools,  # Pass tools to the prompt
-        "tool_names": ", ".join([tool.name for tool in tools]),  # Convert tools to comma-separated names
-        "agent_scratchpad": "",  # Start with an empty scratchpad or provide reasoning history
-        "intermediate_steps": []
-    })
+    agent_response = pre_built_agent.invoke(messages)
     print(agent_response)
 
     current_time = datetime.now()

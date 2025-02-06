@@ -14,6 +14,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, Prom
 from enum import StrEnum
 import os
 import requests
+from asyncio import create_task
 
 from app.database import get_db
 from cloudverse.cloudverse_openai import CloudverseChat
@@ -43,6 +44,7 @@ class Execution(ExecutionBase):
     tool_state: Dict = {}
     create_date: datetime
     last_run_at: datetime
+    agent_id: str
 
     class Config:
         from_attributes = True  # Ensures compatibility with SQLAlchemy models
@@ -59,6 +61,7 @@ class ExecutionDB(Base):
     create_date = Column(DateTime, nullable=False)
     last_run_at = Column(DateTime, nullable=False)
     triggered_by = Column(String, nullable=False)
+    agent_id = Column(String, nullable=False)
 
 def addition(a: int, b: int) -> int:
     return a+b
@@ -87,12 +90,13 @@ async def create_execution(request: CreateExecutionRequest, agent_id: str , db: 
         last_run_at=current_time,
         triggered_by="1",
         history=[],
-        tool_state={}
+        tool_state={},
+        agent_id=agent_id
     )
     db.add(db_execution)
     db.commit()
     db.refresh(db_execution)
-    await create_and_invoke_agent(agent_id, request.trigger_input,  db_execution.id, current_time, True, None, db)
+    create_task(create_and_invoke_agent(agent_id, request.trigger_input,  db_execution.id, current_time, True, None, db))
     return Execution.model_validate(db_execution)
 
 async def create_and_invoke_agent(agent_id, trigger_input, execution_id, timestamp, call_db_again, db_record, db: Session = Depends(get_db)):
@@ -159,7 +163,6 @@ def generate_message(agent_response):
     return message
 
 
-
 @router.get("/{execution_id}",
          response_model=Execution)
 async def get_execution(execution_id: str, db: Session = Depends(get_db)):
@@ -182,5 +185,10 @@ async def continue_execution(request: CreateExecutionRequest, agent_id: str, exe
         )
 
     execution.last_run_at = datetime.now()
-    await create_and_invoke_agent(agent_id, request.trigger_input,  execution_id, execution.last_run_at, False, execution, db)
+    create_task(create_and_invoke_agent(agent_id, request.trigger_input,  execution_id, execution.last_run_at, False, execution, db))
     return execution
+
+@router.get("/{agent_id}/executions")
+def get_executions_by_agent_id(agent_id: str, db: Session = Depends(get_db)):
+    executions = db.query(ExecutionDB).filter(ExecutionDB.agent_id == agent_id).all()
+    return [Execution.model_validate(execution) for execution in executions]

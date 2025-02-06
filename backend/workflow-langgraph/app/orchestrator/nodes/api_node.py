@@ -2,11 +2,12 @@ from typing import Dict, Any
 import aiohttp
 import json
 from ...schemas import APINodeData
+from ...models import WorkflowState
 
 class APINode:
     def __init__(self, config: Dict[str, Any]):
         self.node_id = config.get("name", config.get("id", "api"))
-        self.node_name = self.node_id
+        self.node_name = config.get("data", {}).get("name") or config.get("name") or config.get("id")
         self.config = APINodeData(**config.get("data", {}))
 
     def _replace_placeholders(self, text: str, node_outputs: Dict[str, Any], node_inputs: Dict[str, Any]) -> str:
@@ -27,12 +28,12 @@ class APINode:
         
         return result
 
-    async def process(self, state: Dict[str, Any]) -> Dict[str, Any]:
+    async def process(self, state: WorkflowState) -> WorkflowState:
         """Process the API request and return the response"""
         try:
             # Get node inputs and outputs from state
-            node_inputs = state.get("inputs", {})
-            node_outputs = state.get("node_outputs", {})
+            node_inputs = state.node_inputs
+            node_outputs = state.node_outputs
 
             # Parse headers if provided
             headers = {}
@@ -49,10 +50,8 @@ class APINode:
                     for line in self.config.headers.split('\n'):
                         if ':' in line:
                             key, value = line.split(':', 1)
-                            # Remove quotes and whitespace
                             key = key.strip().strip('"')
                             value = value.strip().strip('"').strip(',')
-                            # Replace placeholders in header values
                             value = self._replace_placeholders(value, node_outputs, node_inputs)
                             headers[key] = value
 
@@ -63,37 +62,50 @@ class APINode:
             # Replace placeholders in URL
             url = self._replace_placeholders(self.config.url, node_outputs, node_inputs)
 
-            # Replace placeholders in body (if body is provided)
-            body = None  # Default value if body is not provided
+            # Replace placeholders in body
+            body = None
             if self.config.body:
                 try:
                     replaced_body = self._replace_placeholders(self.config.body, node_outputs, node_inputs)
-                    body = json.loads(replaced_body)  # Convert to dictionary if valid JSON
+                    body = json.loads(replaced_body)
                 except json.JSONDecodeError:
                     raise ValueError("Invalid JSON format in body")
+
             async with aiohttp.ClientSession() as session:
                 async with session.request(
                     method=self.config.method.upper(),
                     url=url,
                     headers=headers,
-                    json=body if body is not None else None  # Pass only if body exists
+                    json=body if body is not None else None
                 ) as response:
                     response_data = await response.json()
-                    return {
-                        f"{self.node_name}.status": response.status,
-                        f"{self.node_name}.data": response_data,
-                        f"{self.node_name}.url": url,
-                        f"{self.node_name}.method": self.config.method.upper()
-                    }
+                    
+                    # Update state with results
+                    if not state.node_outputs.get(self.node_name):
+                        state.node_outputs[self.node_name] = {}
+                    
+                    state.node_outputs[self.node_name].update({
+                        "status": response.status,
+                        "output": response_data,
+                        "url": url,
+                        "method": self.config.method.upper()
+                    })
+                    return state
 
         except Exception as e:
             error_msg = f"Error in API call: {str(e)}"
+            if not state.node_outputs.get(self.node_name):
+                state.node_outputs[self.node_name] = {}
+                
+            state.node_outputs[self.node_name].update({
+                "error": error_msg,
+                "data": None,
+                "status": None,
+                "url": url if 'url' in locals() else self.config.url,
+                "method": self.config.method.upper()
+            })
+            
             if self.config.errorBehavior == "continue":
-                return {
-                    f"{self.node_name}.error": error_msg,
-                    f"{self.node_name}.data": None,
-                    f"{self.node_name}.status": None,
-                    f"{self.node_name}.url": url if 'url' in locals() else self.config.url,
-                    f"{self.node_name}.method": self.config.method.upper()
-                }
+                state.error = error_msg
+                return state
             raise Exception(error_msg) 

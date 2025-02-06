@@ -270,12 +270,20 @@ class WorkflowOrchestrator:
             async def process(self, state: WorkflowState) -> WorkflowState:
                 # Get all inputs and outputs
                 final_output = {}
-                final_output.update(state.node_inputs)
+                
+                print("\n=== Debug: End Node Processing ===")
+                print(f"Current node outputs: {state.node_outputs}")
                 
                 # Add outputs from all previous nodes
                 for node_name, output in state.node_outputs.items():
-                    if node_name.lower() != "end":
-                        final_output[node_name] = output
+                    print(f"Processing output from node {node_name}: {output}")
+                    if output:  # Only add non-empty outputs
+                        if isinstance(output, dict):
+                            final_output[node_name] = output
+                        else:
+                            final_output[node_name] = {"output": output}
+                
+                print(f"Aggregated final output: {final_output}")
                 
                 # Save stream data
                 if state.execution_id:
@@ -289,6 +297,10 @@ class WorkflowOrchestrator:
                 # Update state
                 state.output = final_output
                 state.current_node = self.node_name
+                state.node_outputs[self.node_name] = final_output
+                
+                print(f"Final state output: {state.output}")
+                print(f"Final node_outputs: {state.node_outputs}")
                 
                 return state
 
@@ -455,7 +467,7 @@ class WorkflowOrchestrator:
         return state
 
     async def execute_workflow(self, workflow_id: int, workflow_config: Dict[str, Any], execution_id: int, initial_inputs: Dict[str, Any] = None):
-        """Execute a workflow with streaming support"""
+        """Execute a workflow with synchronous execution"""
         try:
             print(f"\n=== Starting workflow execution ===")
             print(f"Workflow ID: {workflow_id}")
@@ -482,96 +494,76 @@ class WorkflowOrchestrator:
                 }
             }
             
-            # Print config without non-serializable objects
-            print("\n--- Graph configuration ---")
-            print(f"Recursion limit: {config['recursion_limit']}")
-            print(f"Metadata: {json.dumps(self._serialize_data(config['metadata']), cls=CustomJSONEncoder)}")
-            
             print("\n--- Starting graph execution ---")
-            stream = graph.astream_events(
+            # Execute the graph synchronously
+            print("\n=== Debug: Before Graph Execution ===")
+            print(f"Initial state: {self._serialize_data(initial_state.model_dump())}")
+            
+            final_state = await graph.ainvoke(
                 initial_state,
-                config=config,
-                version="v1"
+                config=config
             )
             
-            final_output = {}  # Initialize final_output
-            last_state = None  # Track the last state
-            event_count = 0
+            print("\n=== Debug: After Graph Execution ===")
+            print(f"Final state type: {type(final_state)}")
             
-            print("\n--- Processing events ---")
-            async for event in stream:
-                event_count += 1
+            # Convert AddableValuesDict to WorkflowState if needed
+            if not isinstance(final_state, WorkflowState):
                 try:
-                    print(f"\nEvent {event_count}:")
-                    print(f"Type: {event.get('type')}")
-                    # Only print serializable parts of the event data
-                    event_data = event.get('data')
-                    if isinstance(event_data, WorkflowState):
-                        print(f"Data: {json.dumps(self._serialize_data(event_data.model_dump()), cls=CustomJSONEncoder)}")
-                    elif isinstance(event_data, dict):
-                        # Filter out non-serializable objects
-                        serializable_data = {k: v for k, v in event_data.items() 
-                                          if isinstance(v, (dict, list, str, int, float, bool, type(None)))}
-                        print(f"Data: {json.dumps(self._serialize_data(serializable_data), cls=CustomJSONEncoder)}")
-                    
-                    # Handle streaming event
-                    await self._handle_stream(event)
-                    
-                    # Keep track of the last state
-                    state_data = event.get("data")
-                    if state_data:
-                        last_state = state_data
-                        print(f"Updated last state: {type(last_state)}")
-                    
-                    # Update final output if this is the last event
-                    if event.get("type") == "end":
-                        print("\n--- Processing final event ---")
-                        if isinstance(last_state, WorkflowState):
-                            final_output = last_state.output
-                            print(f"Final output from WorkflowState: {json.dumps(self._serialize_data(final_output), cls=CustomJSONEncoder)}")
-                        elif isinstance(last_state, dict):
-                            final_output = last_state.get("output", {})
-                            if not final_output and "node_outputs" in last_state:
-                                print("Collecting outputs from all nodes")
-                                for node_name, node_output in last_state["node_outputs"].items():
-                                    if isinstance(node_output, dict):
-                                        print(f"Adding output from node {node_name}")
-                                        final_output.update(node_output)
-                        print(f"Final output from workflow execution: {json.dumps(self._serialize_data(final_output), cls=CustomJSONEncoder)}")
-                
+                    # Convert dict-like object to regular dict
+                    state_dict = dict(final_state)
+                    # Create new WorkflowState from dict
+                    final_state = WorkflowState(**state_dict)
                 except Exception as e:
-                    print(f"Error processing event {event_count}: {str(e)}")
+                    print(f"Error converting state: {str(e)}")
                     raise
             
-            print(f"\n--- Workflow execution completed ---")
-            print(f"Processed {event_count} events")
+            print(f"Final state node_outputs: {self._serialize_data(final_state.node_outputs)}")
+            print(f"Final state output: {self._serialize_data(final_state.output)}")
             
-            # If we still don't have final output, try to get it from the last state
-            if not final_output and last_state:
-                print("\n--- Attempting to recover final output ---")
-                if isinstance(last_state, WorkflowState):
-                    final_output = last_state.output
-                    print("Recovered output from WorkflowState")
-                elif isinstance(last_state, dict):
-                    final_output = last_state.get("output", {})
-                    if not final_output and "node_outputs" in last_state:
-                        print("Recovering output from node outputs")
-                        for node_output in last_state["node_outputs"].values():
-                            if isinstance(node_output, dict):
-                                final_output.update(node_output)
+            # Process the final state
+            final_output = {}
+            node_executions = {}
             
-            if not final_output:
-                print("\nWarning: No final output was generated")
-                # As a last resort, try to collect any available node outputs
-                if last_state and hasattr(last_state, "node_outputs"):
-                    print("Creating final output from collected node outputs")
-                    final_output = {
-                        "collected_outputs": last_state.node_outputs
-                    }
+            # Collect outputs from all nodes
+            for node_name, outputs in final_state.node_outputs.items():
+                print(f"Processing node {node_name} with outputs: {outputs}")
+                # Skip empty outputs
+                if outputs:
+                    if isinstance(outputs, dict):
+                        final_output[node_name] = outputs
+                    else:
+                        final_output[node_name] = {"output": outputs}
+                    print(f"Added to final_output: {final_output[node_name]}")
+                
+                # Collect node execution details
+                node_executions[node_name] = {
+                    "node_name": node_name,
+                    "inputs": final_state.node_inputs.get(node_name, {}),
+                    "outputs": outputs,
+                    "execution_log": [],
+                    "message_history": final_state.message_history.get(node_name, [])
+                }
+                if final_state.error:
+                    node_executions[node_name]["error"] = final_state.error
+            
+            # If we have an end node, merge its output with existing outputs
+            if "end" in final_state.node_outputs:
+                end_output = final_state.node_outputs["end"]
+                print(f"End node output: {end_output}")
+                if isinstance(end_output, dict):
+                    final_output.update(end_output)
+                    print(f"Updated final output with end node: {final_output}")
             
             print(f"\n=== Workflow execution completed ===")
             print(f"Final output: {json.dumps(self._serialize_data(final_output), cls=CustomJSONEncoder)}")
-            return final_output
+            
+            # Return both the final output and execution details
+            return {
+                "execution_id": execution_id,
+                "result": final_output,
+                "node_executions": list(node_executions.values())
+            }
 
         except Exception as e:
             print(f"\nError executing workflow: {str(e)}")

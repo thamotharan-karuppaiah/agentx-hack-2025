@@ -165,6 +165,59 @@ class WorkflowService:
                 self.db.rollback()
             raise
 
+    async def execute_workflow_sync(self, workflow_execution: models.WorkflowExecution, workflow: schemas.Workflow, initial_inputs: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Execute a workflow synchronously and return the result"""
+        try:
+            # Update status to RUNNING
+            workflow_execution.status = "RUNNING"
+            self.db.commit()
+            print(f"Starting synchronous execution of workflow {workflow_execution.id}")
+
+            async with WorkflowOrchestrator(self.db) as orchestrator:
+                try:
+                    # Execute the workflow and wait for result
+                    result = await orchestrator.execute_workflow(
+                        workflow_execution.id,
+                        workflow.config.dict(),
+                        workflow_execution.id,
+                        initial_inputs
+                    )
+
+                    # Update workflow execution status and result in database
+                    workflow_execution.status = "COMPLETED"
+                    workflow_execution.raw_execution_json = self._serialize_workflow_data({
+                        "config": workflow.config.dict(),
+                        "initial_inputs": initial_inputs or {},
+                        "result": result
+                    })
+                    self.db.commit()
+                    print(f"Workflow {workflow_execution.id} completed successfully")
+
+                    # Return the actual graph execution result
+                    return result
+
+                except Exception as exec_error:
+                    print(f"Error executing workflow {workflow_execution.id}: {str(exec_error)}")
+                    workflow_execution.status = "ERROR"
+                    workflow_execution.error_message = str(exec_error)
+                    workflow_execution.raw_execution_json = self._serialize_workflow_data({
+                        "config": workflow.config.dict(),
+                        "initial_inputs": initial_inputs or {},
+                        "error": str(exec_error)
+                    })
+                    self.db.commit()
+                    raise exec_error
+
+        except Exception as e:
+            print(f"Error in execute_workflow_sync: {str(e)}")
+            workflow_execution.status = "ERROR"
+            workflow_execution.error_message = str(e)
+            workflow_execution.raw_execution_json = self._serialize_workflow_data({
+                "error": str(e)
+            })
+            self.db.commit()
+            raise
+
     async def get_execution(self, execution_id: int) -> Optional[models.WorkflowExecution]:
         """Get a workflow execution by ID"""
         return self.db.query(models.WorkflowExecution).filter(
@@ -172,47 +225,54 @@ class WorkflowService:
         ).first()
 
     async def get_workflow_logs(self, execution_id: int) -> schemas.WorkflowResponse:
-        """Get logs and streams for a specific workflow execution with enhanced detail"""
-        workflow = await self.get_execution(execution_id)
-        
-        if not workflow:
-            raise ValueError(f"Workflow execution {execution_id} not found")
-
-        # Get execution steps with all details
-        steps = self.db.query(models.WorkflowExecutionStep).filter(
-            models.WorkflowExecutionStep.execution_id == workflow.id
-        ).order_by(models.WorkflowExecutionStep.start_time).all()
-
-        # Get execution streams
-        streams = self.db.query(models.WorkflowExecutionStream).filter(
-            models.WorkflowExecutionStream.execution_id == workflow.id
-        ).order_by(models.WorkflowExecutionStream.timestamp).all()
-
-        return schemas.WorkflowResponse(
-            id=workflow.id,
-            created_at=workflow.created_at,
-            updated_at=workflow.updated_at,
-            data=[{
-                "name": step.step_name,
-                "error": step.error_message,
-                "input": step.input_data,
-                "output": step.output_data,
-                "start_time": step.start_time,
-                "end_time": step.end_time,
-                "finished": step.finished,
-                "logs": step.logs or [],
-                "traces": step.traces or [],
-                "messages": step.messages or [],
-                "tools": step.tools or [],
-                "credits_used": step.credits_used
-            } for step in steps],
-            streams=[{
-                "node_name": stream.node_name,
-                "stream_type": stream.stream_type,
-                "content": stream.content,
-                "timestamp": stream.timestamp
-            } for stream in streams]
-        )
+        """Get detailed workflow execution logs including steps and streams"""
+        try:
+            # Get execution record
+            execution = await self.get_execution(execution_id)
+            if not execution:
+                raise ValueError(f"Execution {execution_id} not found")
+            
+            # Get execution steps
+            steps = self.db.query(models.WorkflowExecutionStep).filter(
+                models.WorkflowExecutionStep.execution_id == execution_id
+            ).all()
+            
+            # Get execution streams
+            streams = self.db.query(models.WorkflowExecutionStream).filter(
+                models.WorkflowExecutionStream.execution_id == execution_id
+            ).order_by(models.WorkflowExecutionStream.timestamp).all()
+            
+            return schemas.WorkflowResponse(
+                id=execution.id,
+                created_at=execution.created_at,
+                updated_at=execution.updated_at,
+                status=execution.status,
+                result=execution.raw_execution_json.get("result", {}),
+                error=execution.error,
+                data=[{
+                    "name": step.step_name,
+                    "error": step.error_message,
+                    "input": step.input_data,
+                    "output": step.output_data,
+                    "start_time": step.start_time,
+                    "end_time": step.end_time,
+                    "finished": step.finished,
+                    "logs": step.logs or [],
+                    "traces": step.traces or [],
+                    "messages": step.messages or [],
+                    "tools": step.tools or [],
+                    "credits_used": step.credits_used
+                } for step in steps],
+                streams=[{
+                    "node_name": stream.node_name,
+                    "stream_type": stream.stream_type,
+                    "content": stream.content,
+                    "timestamp": stream.timestamp
+                } for stream in streams]
+            )
+        except Exception as e:
+            print(f"Error getting workflow logs: {str(e)}")
+            raise
 
     async def log_step_execution(
         self, execution_id: int, step: schemas.WorkflowStepCreate
@@ -374,4 +434,52 @@ class WorkflowService:
         query = query.order_by(models.WorkflowExecution.created_at.desc())
         query = query.offset(offset).limit(limit)
         
-        return query.all() 
+        return query.all()
+
+    async def update_execution(
+        self,
+        execution_id: int,
+        status: str,
+        result: Dict[str, Any] = None,
+        error: str = None,
+        node_executions: List[Dict[str, Any]] = None
+    ) -> models.WorkflowExecution:
+        """Update a workflow execution with results or error"""
+        try:
+            execution = await self.get_execution(execution_id)
+            if not execution:
+                raise ValueError(f"Execution {execution_id} not found")
+            
+            # Update execution status and result
+            execution.status = status
+            execution.error = error
+            
+            # Update raw execution JSON with results and node executions
+            execution_data = self._serialize_workflow_data(execution.raw_execution_json or {})
+            if result is not None:
+                execution_data["result"] = result
+            if node_executions is not None:
+                execution_data["node_executions"] = node_executions
+            execution.raw_execution_json = execution_data
+            
+            # Store node executions as separate records
+            if node_executions:
+                for node_data in node_executions:
+                    node_execution = models.WorkflowExecutionStep(
+                        execution_id=execution_id,
+                        step_name=node_data["node_name"],
+                        input_data=node_data.get("inputs", {}),
+                        output_data=node_data.get("outputs", {}),
+                        error_message=node_data.get("error"),
+                        messages=node_data.get("message_history", []),
+                        logs=node_data.get("execution_log", [])
+                    )
+                    self.db.add(node_execution)
+            
+            self.db.commit()
+            self.db.refresh(execution)
+            return execution
+            
+        except Exception as e:
+            self.db.rollback()
+            raise ValueError(f"Error updating execution: {str(e)}") 

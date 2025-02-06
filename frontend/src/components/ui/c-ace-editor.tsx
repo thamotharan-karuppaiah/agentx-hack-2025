@@ -20,7 +20,8 @@ import { cn } from '@/lib/utils';
 export type CAceEditorMode = 'javascript' | 'python' | 'text';
 
 export interface CAceEditorProps {
-  value: string;
+  value?: string;
+  defaultValue?: string;
   onChange?: (value: string) => void;
   onValidate?: (annotations: any[]) => void;
   mode?: CAceEditorMode;
@@ -42,6 +43,7 @@ export interface CAceEditorProps {
 
 export const CAceEditor = forwardRef<AceEditor, CAceEditorProps>(({
   value,
+  defaultValue,
   onChange,
   onValidate,
   mode = 'text',
@@ -70,6 +72,7 @@ export const CAceEditor = forwardRef<AceEditor, CAceEditorProps>(({
         placeholder={placeholder}
         theme="github"
         value={value}
+        defaultValue={defaultValue}
         onChange={onChange}
         onValidate={onValidate}
         name={`ace-editor-${Math.random()}`}

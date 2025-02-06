@@ -203,7 +203,7 @@ export default function AgentDetails() {
       <div className="flex flex-col justify-start w-full h-full bg-background-secondary">
         {/* Header */}
         <header className="w-[calc(100%-8px)] mt-2 px-2 xl:px-0 bg-white">
-          <div className="w-full h-[48px] flex items-center px-4 md:px-6 lg:px-8 bg-background-primary border border-border-default rounded-t-sm">
+          <div className="w-full min-h-0 h-[48px] flex items-center px-4 md:px-6 lg:px-8 bg-background-primary border border-border-default rounded-t-sm">
             <div className="block xl:hidden mr-2">
               <Button variant="ghost" size="icon">
                 <Menu className="h-4 w-4" />
@@ -249,9 +249,9 @@ export default function AgentDetails() {
         </header>
 
         {/* Main Content Area */}
-        <div className="w-full flex h-full xl:pl-0 pr-2 pt-0 bg-white">
+        <div className="w-full flex flex-1 min-h-0 xl:pl-0 pr-2 pt-0 bg-white">
           {/* Center Content */}
-          <div className="flex-grow flex flex-col elevation-raw-bulge bg-background-primary relative xl:rounded-r-none border border-t-0 border-border-default" style={{ height: 'calc(-97px + 100vh)' }}>
+          <div className="flex-grow h-full flex flex-col elevation-raw-bulge bg-background-primary relative xl:rounded-r-none border border-t-0 border-border-default">
             <div className="h-full overflow-y-auto flex-grow flex flex-col px-m py-m 2xl:py-xl items-center hide-scroll-bar" id="scroll-container">
               {selectedExec ? (
                 <ChatHistory execution={selectedExec} />
@@ -268,9 +268,7 @@ export default function AgentDetails() {
 
           {/* Right Properties Panel */}
           <div
-            className="w-[380px] shrink-0 hidden xl:block elevation-raw-bulge border border-border-default border-l-0 border-t-0 bg-background-primary overflow-y-auto"
-            style={{ height: 'calc(100vh - 97px)' }}
-          >
+            className="w-[380px] h-full shrink-0 hidden xl:block elevation-raw-bulge border border-border-default border-l-0 border-t-0 bg-background-primary overflow-y-auto">
             <PropertyPane execution={selectedExec} agent={agent} />
           </div>
         </div>

@@ -158,7 +158,7 @@ const RunOnce: React.FC = () => {
   };
 
   return (
-    <div className="flex h-[calc(100vh-8rem)]">
+    <div className="flex h-full">
       {showHistory && history.length > 0 && (
         <div className="w-[240px] border-r bg-gray-50/50">
           <RunHistory 

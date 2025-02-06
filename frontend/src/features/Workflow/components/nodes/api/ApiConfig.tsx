@@ -17,13 +17,13 @@ export function ApiConfig({ data, onChange }: ConfigComponentProps) {
     onChange({ ...data, url });
   }, 500);
 
-  const handleHeadersChange = (headers: string) => {
+  const handleHeadersChange = useDebouncedCallback((headers: string) => {
     onChange({ ...data, headers });
-  };
+  }, 500);
 
-  const handleBodyChange = (body: string) => {
+  const handleBodyChange = useDebouncedCallback((body: string) => {
     onChange({ ...data, body });
-  };
+  }, 500);
 
   return (
     <div className="space-y-6">
@@ -33,8 +33,8 @@ export function ApiConfig({ data, onChange }: ConfigComponentProps) {
         className="w-full"
       >
         <TabsList className="w-full grid grid-cols-2">
-          <TabsTrigger value="get">GET</TabsTrigger>
-          <TabsTrigger value="post">POST</TabsTrigger>
+          <TabsTrigger onClick={() => handleMethodChange('get')} value="get">GET</TabsTrigger>
+          <TabsTrigger onClick={() => handleMethodChange('post')} value="post">POST</TabsTrigger>
         </TabsList>
       </Tabs>
 
@@ -58,7 +58,7 @@ export function ApiConfig({ data, onChange }: ConfigComponentProps) {
           </Label>
           <div>
             <CAceEditor
-              value={data?.headers || ''}
+              defaultValue={data?.headers || ''}
               mode="text"
               onChange={handleHeadersChange}
               minLines={10}
@@ -81,7 +81,7 @@ export function ApiConfig({ data, onChange }: ConfigComponentProps) {
             </Label>
             <div>
               <CAceEditor
-                value={data?.body || ''}
+                defaultValue={data?.body || ''}
                 mode="text"
                 onChange={handleBodyChange}
                 minLines={10}

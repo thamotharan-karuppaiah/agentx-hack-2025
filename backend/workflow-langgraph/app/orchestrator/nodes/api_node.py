@@ -37,12 +37,28 @@ class APINode:
             # Parse headers if provided
             headers = {}
             if self.config.headers:
-                for line in self.config.headers.split('\n'):
-                    if ':' in line:
-                        key, value = line.split(':', 1)
-                        # Replace placeholders in header values
-                        value = self._replace_placeholders(value.strip(), node_outputs, node_inputs)
-                        headers[key.strip()] = value
+                try:
+                    # Try to parse as JSON first
+                    headers_dict = json.loads(self.config.headers)
+                    headers = {
+                        k.strip('"'): v.strip('"') 
+                        for k, v in headers_dict.items()
+                    }
+                except json.JSONDecodeError:
+                    # Fallback to line-by-line parsing
+                    for line in self.config.headers.split('\n'):
+                        if ':' in line:
+                            key, value = line.split(':', 1)
+                            # Remove quotes and whitespace
+                            key = key.strip().strip('"')
+                            value = value.strip().strip('"').strip(',')
+                            # Replace placeholders in header values
+                            value = self._replace_placeholders(value, node_outputs, node_inputs)
+                            headers[key] = value
+
+            # Add Content-Type if not present
+            if 'Content-Type' not in headers and 'content-type' not in headers:
+                headers['Content-Type'] = 'application/json'
 
             # Replace placeholders in URL
             url = self._replace_placeholders(self.config.url, node_outputs, node_inputs)

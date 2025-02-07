@@ -2,6 +2,7 @@ import { ArrowLeft, ChevronDown, ChevronRight } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
 import { Agent } from '../types';
+import { AgentExecution } from '@/services/agentExecutionService';
 
 interface QueueItem {
   name: string;
@@ -19,6 +20,7 @@ interface QueueDetailsViewProps {
   onBack: () => void;
   onItemClick: (item: QueueItem, groupName: string) => void;
   agent: Agent;
+  executions: AgentExecution[];
 }
 
 export function QueueDetailsView({ onBack, onItemClick, agent }: QueueDetailsViewProps) {
@@ -40,6 +42,7 @@ export function QueueDetailsView({ onBack, onItemClick, agent }: QueueDetailsVie
       status: 'active',
       items: agent.integrations?.map(integration => ({
         name: integration.triggerName,
+        triggerType: integration.triggerType,
         moduleType: integration.moduleName,
         status: 'active'
       })) || []

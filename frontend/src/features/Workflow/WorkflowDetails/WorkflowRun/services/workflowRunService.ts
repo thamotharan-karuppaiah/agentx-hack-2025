@@ -1,4 +1,5 @@
 import { WorkflowRunState, WorkflowStep } from '../types';
+import api from '@/services/apiService';
 
 const mockWorkflowSteps: WorkflowStep[] = [
   { id: 1, name: 'Initialize workflow', status: 'pending' },
@@ -29,6 +30,8 @@ const mockHistoryStore: {
     state?: WorkflowRunState;
   }[]
 } = {};
+
+const BASE_URL = 'http://localhost:8000/workflows';
 
 export const workflowRunService = {
   runWorkflow: async (workflowId: string, input: Record<string, any>): Promise<string> => {
@@ -165,5 +168,31 @@ export const workflowRunService = {
   getRunHistory: async (workflowId: string) => {
     await delay(500);
     return mockHistoryStore[workflowId] || [];
+  },
+
+  runWorkflowSync: async (workflowId: string, input: Record<string, any>): Promise<any> => {
+    try {
+      const response = await api.post(`${BASE_URL}/${workflowId}/sync`, {
+        initial_inputs: input
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Error running workflow:', error);
+      throw error;
+    }
+  },
+
+  validateRequiredFields: (inputNode: any, input: Record<string, any>): string[] => {
+    const requiredFields: string[] = [];
+    
+    inputNode?.data?.groups?.forEach((group: any) => {
+      group.fields?.forEach((field: any) => {
+        if (field.required && field.variableName) {
+          requiredFields.push(field.variableName);
+        }
+      });
+    });
+
+    return requiredFields.filter(field => !input[field]);
   }
 }; 

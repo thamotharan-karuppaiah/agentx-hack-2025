@@ -1,21 +1,25 @@
 import { Agent } from '../types';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { ChevronRight, ChevronDown } from 'lucide-react';
+import { ChevronRight, ChevronDown, BotIcon, ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useState } from 'react';
+import { AgentExecution } from '@/services/agentExecutionService';
+import { formatDistanceToNow } from 'date-fns';
 
 interface QueueItemDetailsProps {
   agent: Agent;
   selectedQueue: {
     name: string;
     moduleType: string;
+    triggerType: string;
     status: 'active';
   } | null;
+  executions: AgentExecution[];
   onEditClick: () => void;
 }
 
-export function QueueItemDetails({ agent, selectedQueue, onEditClick }: QueueItemDetailsProps) {
+export function QueueItemDetails({ agent, selectedQueue, executions, onEditClick }: QueueItemDetailsProps) {
   const [expandedSections, setExpandedSections] = useState({
     inProgress: true,
     upcoming: true,
@@ -78,9 +82,58 @@ export function QueueItemDetails({ agent, selectedQueue, onEditClick }: QueueIte
                   "space-y-2 transition-all",
                   expandedSections.inProgress ? "block" : "hidden"
                 )}>
-                  <div className="text-sm text-muted-foreground text-center py-4 bg-muted/40 rounded-md">
-                    No tasks in progress
-                  </div>
+                  {executions.filter((execution) => 
+                    execution.trigger_type === selectedQueue.triggerType
+                  ).length === 0 ? (
+                    <div className="text-sm text-muted-foreground text-center py-4 bg-muted/40 rounded-md">
+                      No tasks in progress
+                    </div>
+                  ) : (
+                    executions
+                      .filter((execution) => 
+                        execution.trigger_type === selectedQueue.triggerType
+                      )
+                      .map((execution) => (
+                        <div 
+                          key={execution.id}
+                          className="flex items-center gap-3 p-3 rounded-md border border-border-default hover:bg-muted/40 transition-colors cursor-pointer"
+                        >
+                          <div className="h-8 w-8 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
+                            <BotIcon className="h-4 w-4 text-primary" />
+                          </div>
+                          
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <h4 className="text-sm font-medium truncate">
+                                {execution.history?.[0]?.content || 'Untitled Task'}
+                              </h4>
+                              {execution.status === 'TOOL_IN_PROGRESS' && (
+                                <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
+                                  Tool Running
+                                </span>
+                              )}
+                              {execution.status === 'AGENT_IN_PROGRESS' && (
+                                <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700">
+                                  Agent Thinking
+                                </span>
+                              )}
+                            </div>
+                            
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
+                              <span>
+                                Started {formatDistanceToNow(new Date(execution.create_date), { addSuffix: true })}
+                              </span>
+                              <span>•</span>
+                              <span>
+                                Last update {formatDistanceToNow(new Date(execution.last_run_at), { addSuffix: true })}
+                              </span>
+                            </div>
+                          </div>
+
+                          <ArrowRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                        </div>
+                      ))
+                  )}
                 </div>
               </div>
 

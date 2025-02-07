@@ -1,7 +1,6 @@
-import { formatDistanceToNow } from 'date-fns';
 import api from './apiService';
 
-const BASE_URL = 'http://localhost:8000';
+const BASE_URL = 'http://localhost:8000/agent/${agentId}/executions';
 
 const headers = {
   'x-user-id': '1',
@@ -46,7 +45,8 @@ const generateMockExecution = (id: string, agentId: string): AgentExecution => (
   create_date: new Date().toISOString(),
   last_run_at: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
-  triggeredBy: 'Agent',
+  triggered_by: 'Agent',
+  trigger_type: 'manual',
   history: []
 });
 
@@ -59,21 +59,6 @@ export const agentExecutionService = {
   getExecution: async (executionId: string): Promise<AgentExecution> => {
     // Mock response
     return generateMockExecution(executionId, 'mock-agent-id');
-  },
-
-  createExecution: async (agentId: string, title: string): Promise<AgentExecution> => {
-    // Mock response
-    return {
-      id: `exec-${Date.now()}`,
-      agentId,
-      title,
-      status: 'running',
-      create_date: new Date().toISOString(),
-      last_run_at: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      triggeredBy: 'Agent',
-        history: []
-    };
   },
 
   createNewExecution: async (agentId: string, message: string): Promise<AgentExecution> => {

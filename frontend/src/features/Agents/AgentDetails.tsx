@@ -389,6 +389,7 @@ export default function AgentDetails() {
           >
             <QueueDetailsView 
               onBack={() => setShowQueueDetails(false)} 
+              executions={executions}
               onItemClick={handleQueueItemClick}
               agent={agent}
             />
@@ -400,6 +401,7 @@ export default function AgentDetails() {
       {selectedQueue ? (
         <QueueItemDetails 
           agent={agent}
+          executions={executions}
           selectedQueue={selectedQueue}
           onEditClick={() => setEditModalOpen(true)}
         />

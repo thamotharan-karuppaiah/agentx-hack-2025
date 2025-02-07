@@ -24,6 +24,7 @@ from app import schemas
 from app.config import settings
 from app.database import get_db
 from cloudverse.cloudverse_openai import CloudverseChat
+import aiohttp
 
 router = APIRouter()
 Base = declarative_base()
@@ -236,10 +237,144 @@ def init_tools_definition(response_data):
     
     return tools
 
+async def process_agent_interaction(
+    agent_id: str,
+    trigger_input: str,
+    execution_id: int,
+    timestamp: datetime,
+    db: Session,
+    db_record: Optional[ExecutionDB] = None
+) -> Execution:
+    """
+    Process agent interactions including tool calls and database updates in a structured way.
+    
+    Args:
+        agent_id: The ID of the agent to interact with
+        trigger_input: The input message to send to the agent
+        execution_id: The ID of the execution record
+        timestamp: Current timestamp
+        db: Database session
+        db_record: Optional existing execution record
+    """
+    try:
+        # Fetch agent configuration
+        headers = {
+            "x-workspace-id": "1",
+            "x-user-id": "1"
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"http://localhost:8096/workflow-service/v1/agents/{agent_id}",
+                headers=headers
+            ) as response:
+                response.raise_for_status()
+                response_data = await response.json()
+
+        # Initialize agent
+        llm = init_llm()
+        tools_definition = init_tools_definition(response_data)
+        pre_built_agent = create_react_agent(
+            model=llm,
+            prompt=response_data["systemPrompt"],
+            tools=tools_definition
+        )
+
+        # Get or create execution record
+        # Create execution record if it doesn't exist
+        if db_record is None:
+            execution_db = db.query(ExecutionDB).filter(ExecutionDB.id == execution_id).first()
+            if not execution_db:
+                raise HTTPException(status_code=404, detail="Execution record not found")
+        else:
+            # Update execution record if it exists
+            execution_db = db_record
+
+        # Prepare input messages
+        input_messages = []
+        if execution_db.history:
+            for record in execution_db.history:
+                input_messages.append(tuple([record['type'], record['content']]))
+        input_messages.append(("user", trigger_input))
+        messages = {"messages": input_messages}
+
+        # Process agent responses in a loop until we get a final response
+        while True:
+            # Get the latest agent response
+            agent_response = pre_built_agent.invoke(messages)
+            print(f"Agent response: {agent_response}")
+
+            # Process and store the response
+            new_message = generate_message(agent_response)
+            history = execution_db.history
+            history.append(new_message)
+            
+            # Update DB with latest history
+            execution_db.history = history
+            execution_db.last_run_at = datetime.now(timezone.utc)
+            db.commit()
+
+            # Check if the last message is a tool call
+            last_message = agent_response['messages'][-1]
+            has_tool_call = isinstance(last_message, ToolMessage) and hasattr(last_message, 'tool_call_id')
+
+            if not has_tool_call:
+                # No tool calls, this is the final response
+                execution_db.status = ExecutionStatus.IDLE
+                db.commit()
+                break
+
+            # Process tool call
+            execution_db.status = ExecutionStatus.TOOL_IN_PROGRESS
+            db.commit()
+
+            try:
+                # Extract tool arguments
+                tool_args = last_message.additional_kwargs.get('tool_inputs', {})
+                
+                # Execute tool
+                result = await execute_tool(last_message.tool_call_id, tool_args, db)
+                formatted_result = format_result(result)
+                
+                # Add tool result to history
+                history.append({
+                    'type': 'tool',
+                    'content': formatted_result,
+                    'tool_call_id': last_message.tool_call_id,
+                    'timestamp': datetime.now(timezone.utc)
+                })
+
+                # Add tool message for next agent invocation
+                tool_message = ToolMessage(
+                    content=formatted_result,
+                    tool_call_id=last_message.tool_call_id
+                )
+                messages["messages"].append(tool_message)
+                
+                # Update DB with intermediate state
+                execution_db.history = history
+                db.commit()
+
+            except Exception as e:
+                print(f"Error executing tool: {str(e)}")
+                execution_db.status = ExecutionStatus.IDLE
+                db.commit()
+                raise HTTPException(status_code=500, detail=str(e))
+            
+        db.refresh(execution_db)
+        db.flush()
+        return Execution.model_validate(execution_db)
+
+    except Exception as e:
+        print(f"Error in process_agent_interaction: {str(e)}")
+        if 'execution_db' in locals():
+            execution_db.status = ExecutionStatus.IDLE
+            db.commit()
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.post("/{agent_id}/createExecution",
          response_model=Execution,
          status_code=status.HTTP_201_CREATED)
-async def create_execution(request: CreateExecutionRequest, agent_id: str , db: Session = Depends(get_db)):
+async def create_execution(request: CreateExecutionRequest, agent_id: str, db: Session = Depends(get_db)):
     current_time = datetime.now(timezone.utc)
     db_execution = ExecutionDB(
         status=ExecutionStatus.AGENT_IN_PROGRESS,
@@ -258,8 +393,40 @@ async def create_execution(request: CreateExecutionRequest, agent_id: str , db: 
     db.add(db_execution)
     db.commit()
     db.refresh(db_execution)
-    create_task(create_and_invoke_agent(agent_id, request.trigger_input,  db_execution.id, current_time, True, None, db))
+    
+    # Use the new process_agent_interaction method
+    create_task(process_agent_interaction(
+        agent_id=agent_id,
+        trigger_input=request.trigger_input,
+        execution_id=db_execution.id,
+        timestamp=current_time,
+        db=db
+    ))
+    
     return Execution.model_validate(db_execution)
+
+async def execute_tool(workflow_id: str, tool_args: dict, db: Session) -> dict:
+    """Execute a workflow tool and return the result."""
+    url = f"http://localhost:8096/workflow-service/v1/workflows/{workflow_id}"
+    headers = {
+        "x-workspace-id": "1",
+        "x-user-id": "2"
+    }
+    
+    # Use aiohttp for async HTTP requests
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, headers=headers) as response:
+            response.raise_for_status()
+            workflow_data = await response.json()
+    
+    workflow = schemas.Workflow(**workflow_data)
+    workflow_service = WorkflowService(db)
+    workflow_execution = await workflow_service.create_workflow(workflow, tool_args)
+    result = await workflow_service.execute_workflow_sync(workflow_execution, workflow, tool_args)
+    print(result.get("result", {}))
+
+    formatted_result = format_result(result.get("result", {}))
+    return result.get("result", {})
 
 async def create_and_invoke_agent(agent_id, trigger_input, execution_id, timestamp, call_db_again, db_record, db: Session = Depends(get_db)):
     headers = {
@@ -285,7 +452,7 @@ async def create_and_invoke_agent(agent_id, trigger_input, execution_id, timesta
     # Pass the necessary variables as a dictionary
     agent_response = pre_built_agent.invoke(messages)
     # todo: add other columns when tool calling or other things are in response
-
+    print(f"agent_response: {agent_response}")
 
     if call_db_again:
         execution_db = db.query(ExecutionDB).filter(ExecutionDB.id == execution_id).first()
@@ -301,28 +468,84 @@ async def create_and_invoke_agent(agent_id, trigger_input, execution_id, timesta
 
     execution_db.history = message
     execution_db.status = ExecutionStatus.IDLE
+
+    # Handle tool messages and execute tools if present
+    for msg in agent_response['messages']:
+        if isinstance(msg, ToolMessage) and msg.tool_call_id:
+            execution_db.status = ExecutionStatus.TOOL_IN_PROGRESS
+            
+            try:
+                result = await execute_tool(msg.tool_call_id, {"city": "MAA"}, db)
+            except Exception as e:
+                print(f"Error executing tool: {str(e)}")
+                raise HTTPException(status_code=500, detail=str(e))
+            
+
+            formatted_result = format_result(result.get("result", {}))
+            print(formatted_result)
+            history.append(formatted_result)
+
+
+            # create the tool message and add it to the messages
+            # sample tool message :
+            # {
+        #     "role": "tool",
+        #     "content": [
+        #         {
+        #             "type": "tool-result",
+        #             "toolCallId": "call_XZNl58ZM1aD0zZvJMXcTGUpB",
+        #             "toolName": "subtract",
+        #             "result": "3"
+        #         }
+        #     ]
+        # }
+            tool_message = ToolMessage(content=formatted_result, tool_call_id=msg.tool_call_id)
+            messages["messages"].append(tool_message)
+
+            agent_response = pre_built_agent.invoke(messages)
+            
+    
+    execution_db.status = ExecutionStatus.IDLE
     db.commit()
     db.refresh(execution_db)
 
+def format_result(result):
+    """Format the result by extracting the 'output' from the last step in the workflow result.
+    
+    Args:
+        result (dict): Dictionary containing workflow step results
+        
+    Returns:
+        Any: The 'output' value from the last step, or the entire result if no 'output' found
+    """
+    # Get the last step's result (excluding 'start')
+    steps = [key for key in result.keys() if key != 'start']
+    if not steps:
+        return result
+        
+    last_step = steps[-1]
+    last_result = result[last_step]
+    
+    # Return the 'output' if it exists, otherwise return the full result
+    return last_result.get('output', last_result)
+
 def generate_message(agent_response):
-    messages = agent_response['messages']
     data_list = []
-    for m in messages:
-        message = dict()
-        message['timestamp'] = datetime.now(timezone.utc)
-        message['content'] = m.content
-        if type(m)==AIMessage:
-            message['type'] = 'assistant'
-        elif type(m)==HumanMessage:
-            message['type'] = 'user'
-        elif type(m)==ToolMessage:
-            message['type'] = 'tool'
-            message['tool_call_id'] = m.tool_call_id
-            message['tool_calls'] = m.additional_kwargs['tool_outputs']
-        elif type(m)==SystemMessage:
-            message['type'] = 'system'
-        data_list.append(message)
-    return data_list
+    m = agent_response['messages'][-1]
+    message = dict()
+    message['timestamp'] = datetime.now(timezone.utc)
+    message['content'] = getattr(m, 'content', '') or ''  # Safely get content with default empty string
+        
+    if type(m) == AIMessage:
+        message['type'] = 'assistant'
+    elif type(m) == HumanMessage:
+        message['type'] = 'user'
+    elif type(m) == ToolMessage:
+        message['type'] = 'tool'
+        message['tool_call_id'] = m.tool_call_id
+    elif type(m) == SystemMessage:
+        message['type'] = 'system'    
+    return message
 
 
 @router.get("/{execution_id}",
@@ -357,7 +580,16 @@ async def continue_execution(request: CreateExecutionRequest, agent_id: str, exe
     db.commit()
     db.refresh(execution)
     
-    create_task(create_and_invoke_agent(agent_id, request.trigger_input, execution_id, current_time, False, execution, db))
+    # Use the new process_agent_interaction method
+    create_task(process_agent_interaction(
+        agent_id=agent_id,
+        trigger_input=request.trigger_input,
+        execution_id=execution_id,
+        timestamp=current_time,
+        db=db,
+        db_record=execution
+    ))
+    
     return execution
 
 @router.get("/{agent_id}/executions",

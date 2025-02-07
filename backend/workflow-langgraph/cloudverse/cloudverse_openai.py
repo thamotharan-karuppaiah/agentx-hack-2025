@@ -324,21 +324,15 @@ class CloudverseChat(BaseChatModel):
                 # Format tool calls and create messages
                 messages = []
                 for tool_call in tool_calls:
-                    tool_id = tool_call.get("id", str(uuid.uuid4()))
-                    formatted_tool_call = {
-                        "id": tool_id,
-                        "type": "function",
-                        "function": {
-                            "name": tool_call.get("toolName", ""),
-                            "arguments": json.dumps(tool_call.get("args", {}))
-                        }
-                    }
+                    
+                    tool_name = tool_call.get("toolName")
+                    tool_args = tool_call.get("args")
+                    # tool_result = call_tool(tool_id, tool_args) 
                     
                     messages.append(ToolMessage(
                         content=content,
-                        tool_call_id=tool_id,
+                        tool_call_id=tool_name,
                         additional_kwargs={
-                            "raw_response": final_response_data,
                             "tool_outputs": tool_call if tool_calls else None
                         }
                     ))

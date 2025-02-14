@@ -245,17 +245,6 @@ async def process_agent_interaction(
     db: Session,
     db_record: Optional[ExecutionDB] = None
 ) -> Execution:
-    """
-    Process agent interactions including tool calls and database updates in a structured way.
-    
-    Args:
-        agent_id: The ID of the agent to interact with
-        trigger_input: The input message to send to the agent
-        execution_id: The ID of the execution record
-        timestamp: Current timestamp
-        db: Database session
-        db_record: Optional existing execution record
-    """
     try:
         # Fetch agent configuration
         headers = {
@@ -279,95 +268,102 @@ async def process_agent_interaction(
             tools=tools_definition
         )
 
-        # Get or create execution record
-        # Create execution record if it doesn't exist
+        # Get execution record
         if db_record is None:
             execution_db = db.query(ExecutionDB).filter(ExecutionDB.id == execution_id).first()
             if not execution_db:
                 raise HTTPException(status_code=404, detail="Execution record not found")
         else:
-            # Update execution record if it exists
             execution_db = db_record
 
+        # Important: Create a new list for history to ensure we're not modifying the same reference
+        current_history = list(execution_db.history) if execution_db.history else []
+        
         # Prepare input messages
         input_messages = []
-        if execution_db.history:
-            for record in execution_db.history:
+        for record in current_history:
+            if record['type'] == 'tool':
+                continue
+            else:
                 input_messages.append(tuple([record['type'], record['content']]))
         input_messages.append(("user", trigger_input))
         messages = {"messages": input_messages}
 
-        # Process agent responses in a loop until we get a final response
         while True:
-            # Get the latest agent response
+            # Get agent response
             agent_response = pre_built_agent.invoke(messages)
             print(f"Agent response: {agent_response}")
 
             # Process and store the response
             new_message = generate_message(agent_response)
-            history = execution_db.history
-            history.append(new_message)
+            current_history.append(new_message)
             
-            # Update DB with latest history
-            execution_db.history = history
+            # Important: Create a new session object for each update
+            execution_db.history = current_history
             execution_db.last_run_at = datetime.now(timezone.utc)
+            db.add(execution_db)  # Explicitly add the object to the session
             db.commit()
+            db.refresh(execution_db)  # Refresh after commit
 
-            # Check if the last message is a tool call
+            # Check for tool call
             last_message = agent_response['messages'][-1]
             has_tool_call = isinstance(last_message, ToolMessage) and hasattr(last_message, 'tool_call_id')
 
             if not has_tool_call:
-                # No tool calls, this is the final response
                 execution_db.status = ExecutionStatus.IDLE
+                db.add(execution_db)
                 db.commit()
+                db.refresh(execution_db)
                 break
 
             # Process tool call
             execution_db.status = ExecutionStatus.TOOL_IN_PROGRESS
+            db.add(execution_db)
             db.commit()
+            db.refresh(execution_db)
 
             try:
-                # Extract tool arguments
-                tool_args = last_message.additional_kwargs.get('tool_inputs', {})
-                
                 # Execute tool
+                tool_args = last_message.additional_kwargs.get('tool_inputs', {})
                 result = await execute_tool(last_message.tool_call_id, tool_args, db)
                 formatted_result = format_result(result)
                 
                 # Add tool result to history
-                history.append({
+                tool_message_dict = {
                     'type': 'tool',
                     'content': formatted_result,
                     'tool_call_id': last_message.tool_call_id,
                     'timestamp': datetime.now(timezone.utc)
-                })
+                }
+                current_history.append(tool_message_dict)
 
-                # Add tool message for next agent invocation
+                # Update messages for next iteration
                 tool_message = ToolMessage(
                     content=formatted_result,
                     tool_call_id=last_message.tool_call_id
                 )
                 messages["messages"].append(tool_message)
                 
-                # Update DB with intermediate state
-                execution_db.history = history
+                # Update DB with new history
+                execution_db.history = current_history
+                db.add(execution_db)
                 db.commit()
+                db.refresh(execution_db)
 
             except Exception as e:
                 print(f"Error executing tool: {str(e)}")
                 execution_db.status = ExecutionStatus.IDLE
+                db.add(execution_db)
                 db.commit()
                 raise HTTPException(status_code=500, detail=str(e))
-            
-        db.refresh(execution_db)
-        db.flush()
+
         return Execution.model_validate(execution_db)
 
     except Exception as e:
         print(f"Error in process_agent_interaction: {str(e)}")
         if 'execution_db' in locals():
             execution_db.status = ExecutionStatus.IDLE
+            db.add(execution_db)
             db.commit()
         raise HTTPException(status_code=500, detail=str(e))
 

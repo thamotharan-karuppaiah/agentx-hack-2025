@@ -7,6 +7,7 @@ from langchain_core.messages import (
     BaseMessage
 )
 from langchain_openai import ChatOpenAI
+from langchain_anthropic import ChatAnthropic
 from app.config import settings
 from cloudverse.cloudverse_openai import CloudverseChat
 from pydantic import BaseModel, Field
@@ -56,9 +57,16 @@ class LLMNode:
             node_config["messages"] = config["data"]["messages"]
             
         self.config = LLMNodeConfig(**node_config)
+
+
+        # self.llm = ChatAnthropic(model="claude-2.1", 
+                                # temperature=self.config.temperature, 
+                                # max_tokens=self.config.max_tokens, 
+                                # streaming=self.config.streaming,
+                                # anthropic_api_key=settings.ANTHROPIC_API_KEY)
         
         PROXY_URL = 'https://cloudverse.freshworkscorp.com'
-        PROXY_TOKEN = 'eyJhbGciOiJIUzI1NiJ9.eyJ1c2VyIjp7Im5hbWUiOiJSYW1yYXRhbiBKYXZhIiwiZW1haWwiOiJyYW1yYXRhbi5qYXZhQGZyZXNod29ya3MuY29tIiwiaW1hZ2UiOiJodHRwczovL2xoMy5nb29nbGV1c2VyY29udGVudC5jb20vYS9BQ2c4b2NJSGNkaFNnTTFFTW1obDAweXdwMmpjaWEtQ0pzQkQwTUE4NzhsZG1BYmN3YWswSnc9czk2LWMiLCJpZCI6IjY3YTIwY2EzMGUyNThhNjc4OTU4YmJmMSJ9LCJleHBpcmVzIjoiMjAyNS0wMi0wNFQxNDo1MzoxMS4wMDlaIiwianRpIjoiR1E1dGhiTExxZU9DbGpLNVMwU0ZUIiwiaWF0IjoxNzM4NjczNTk2LCJleHAiOjE3MzkyNzgzOTZ9.Vxd9MVeKbTsTg7DhJ5g39-65PCXslAd6RAi4TZTyeHw'
+        PROXY_TOKEN = 'eyJhbGciOiJIUzI1NiJ9.eyJ1c2VyIjp7Im5hbWUiOiJMb2dlc2hrdW1hciBSYW1hciIsImVtYWlsIjoibG9nZXNoa3VtYXIucmFtYXJAZnJlc2h3b3Jrcy5jb20iLCJpbWFnZSI6Imh0dHBzOi8vbGgzLmdvb2dsZXVzZXJjb250ZW50LmNvbS9hL0FDZzhvY0xFZll4Q2RsZWYtX0djUTV4aG5YdnlYZUo2LUlwSUFQbW5fLW9xTkt1MGhLX3p6NFU9czk2LWMifSwianRpIjoiaVFteHhPSGMwZDBxeHdsTjc4YlNnIiwiaWF0IjoxNzM5Mzg0NzkyLCJleHAiOjE3Mzk5ODk1OTJ9.bmeaghBJ0x5RorzerPrU8UYsZxVWBDPmkhzV2JUSDTQ'
         self.llm = CloudverseChat(proxy_url=PROXY_URL, auth_token=PROXY_TOKEN,
                                model_name=self.config.model, temperature=self.config.temperature,
                                max_tokens=self.config.max_tokens, stream=self.config.streaming)
@@ -182,9 +190,6 @@ class LLMNode:
                 "output": response.content,
                 "message_history": serialized_history
             }
-            
-            # Update the workflow state's message history
-            state.message_history[self.node_name] = serialized_history
             
             return state
             

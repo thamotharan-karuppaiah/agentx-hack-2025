@@ -76,5 +76,4 @@ class WorkflowState(BaseModel):
     execution_log: List = []
     node_inputs: Dict[str, Any] = {}  # Store inputs for each node
     node_outputs: Dict[str, Any] = {}  # Store outputs for each node
-    message_history: Dict[str, List[Dict[str, Any]]] = {}  # Store message history for each node
     execution_id: Optional[int] = None  # Add execution_id to track streams

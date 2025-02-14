@@ -15,6 +15,7 @@ router = APIRouter()
 async def test_endpoint():
     return {"message": "Workflow router is working"}
 
+
 @router.post("")  # Root POST endpoint for workflow creation
 async def create_workflow(
     workflow: schemas.Workflow,

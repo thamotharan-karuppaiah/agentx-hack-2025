@@ -27,7 +27,7 @@ def set_search_path(dbapi_connection, connection_record):
     """Set the search path and ensure proper permissions on connection"""
     cursor = dbapi_connection.cursor()
     cursor.execute("SET search_path TO public")
-    cursor.execute("ALTER DATABASE workflow_db OWNER TO lramar")
+    cursor.execute("ALTER DATABASE workflow_db OWNER TO postgres")
     cursor.close()
 
 # Configure session with proper settings
@@ -60,20 +60,6 @@ def init_db():
         engine.dispose()
         
         # Create a new connection and set up permissions
-        with engine.connect() as conn:
-            # Set search path
-            conn.execute(text("SET search_path TO public"))
-            
-            # Ensure proper permissions
-            conn.execute(text("ALTER DATABASE workflow_db OWNER TO lramar"))
-            conn.execute(text("GRANT ALL PRIVILEGES ON DATABASE workflow_db TO lramar"))
-            conn.execute(text("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO lramar"))
-            conn.execute(text("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO lramar"))
-            conn.execute(text("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO lramar"))
-            conn.execute(text("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO lramar"))
-            
-            conn.commit()
-            
         # Create all tables
         Base.metadata.create_all(bind=engine)
         

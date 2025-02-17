@@ -140,8 +140,6 @@ class LLMNode:
                 state.node_inputs = {}
             if not state.node_outputs:
                 state.node_outputs = {}
-            if not state.message_history:
-                state.message_history = {}
             
             # Create a copy of message history and format each message
             current_messages = []

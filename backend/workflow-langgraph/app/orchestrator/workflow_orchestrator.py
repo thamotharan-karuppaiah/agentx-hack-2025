@@ -1,8 +1,8 @@
 from typing import Dict, Any, Optional, List
 from langgraph.graph import StateGraph, END, START
-from langgraph.checkpoint.postgres import PostgresSaver
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langchain_core.messages import HumanMessage
-from psycopg import Connection
+from psycopg import AsyncConnection
 from ..config import settings
 from .nodes.llm_node import LLMNode
 from .nodes.api_node import APINode
@@ -15,6 +15,8 @@ from ..models import WorkflowExecutionStream, WorkflowState
 from sqlalchemy.orm import Session
 from datetime import datetime
 import json
+import asyncpg
+
 
 class CustomJSONEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -29,20 +31,41 @@ class CustomJSONEncoder(json.JSONEncoder):
         return super().default(obj)
 
 class WorkflowOrchestrator:
+    _pool = None
     def __init__(self, db: Optional[Session] = None):
         self.db = db
         self.nodes = {}
         self.graph = None
-        self._setup_checkpoint()
+        self.checkpoint = None
+        self.conn = None
+        
+    async def initialize(self):
+        """Call this method explicitly to set up the database checkpoint asynchronously."""
+        await self._setup_checkpoint()
 
-    def _setup_checkpoint(self):
-        """Setup database checkpoint connection"""
-        self.conn = Connection.connect(
-            settings.DATABASE_URL,
-            prepare_threshold=0
-        )
-        self.checkpoint = PostgresSaver(self.conn)
-        self.checkpoint.setup()
+    @classmethod
+    async def setup_pool(cls):
+        """Create a connection pool once at startup"""
+        if cls._pool is None:
+            cls._pool = await asyncpg.create_pool(
+                dsn=settings.DATABASE_URL, 
+                min_size=1, 
+                max_size=10
+            )
+
+    async def _setup_checkpoint(self):
+        """Use the shared connection pool instead of opening new connections"""
+        await self.setup_pool()
+        self.conn = await self._pool.acquire()
+        self.checkpoint = AsyncPostgresSaver(self.conn)
+        await self.checkpoint.setup()
+
+        #  self.conn = await AsyncConnection.connect(
+        #     settings.DATABASE_URL,
+        #     prepare_threshold=0
+        # )
+        # self.checkpoint = AsyncPostgresSaver(self.conn)
+        # await self.checkpoint.setup()
 
     async def __aenter__(self):
         return self
@@ -51,7 +74,10 @@ class WorkflowOrchestrator:
         """Cleanup resources"""
         try:
             await self._cleanup_nodes()
-            self._cleanup_connections()
+            await self._cleanup_connections()
+            if self._pool is not None:
+                await self._pool.close()  # ✅ Close the connection pool when shutting down
+                self._pool = None
         except Exception as e:
             print(f"Error during cleanup: {str(e)}")
             if exc_type is None:
@@ -69,11 +95,12 @@ class WorkflowOrchestrator:
                 except Exception as e:
                     print(f"Error cleaning up node {node_name}: {str(e)}")
 
-    def _cleanup_connections(self):
+    async def _cleanup_connections(self):
         """Cleanup database connections"""
         if self.conn:
             try:
-                self.conn.close()
+                await self._pool.release(self.conn)  # ✅ Properly return connection to pool
+                self.conn = None
             except Exception as e:
                 print(f"Error closing database connection: {str(e)}")
 
@@ -223,7 +250,7 @@ class WorkflowOrchestrator:
             else:
                 graph.add_edge(source, target)
 
-        return graph.compile()
+        return graph.compile(checkpointer=self.checkpoint)
 
     def _create_node_function(self, node, node_name):
         """Create node execution function"""
@@ -264,7 +291,7 @@ class WorkflowOrchestrator:
                 error=None
             )
 
-            config = {"configurable": {"thread_id": "2"}}
+            config = {"configurable": {"thread_id": "1"}}
 
             final_state = await graph.ainvoke(initial_state, config=config)
             if not isinstance(final_state, WorkflowState):

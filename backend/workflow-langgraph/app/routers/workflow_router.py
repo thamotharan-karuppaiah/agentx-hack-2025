@@ -365,3 +365,57 @@ async def get_execution_steps(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/{workflow_id}")
+async def create_workflow_by_id(
+    workflow_id: str,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    initial_inputs: Dict[str, Any] = None
+):
+    """Create and execute a new workflow by ID"""
+    # Fetch workflow configuration from external service
+    url = f"http://localhost:8096/workflow-service/v1/workflows/{workflow_id}"
+    headers = {
+        "x-workspace-id": "1",
+        "x-user-id": "2"
+    }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, headers=headers)
+    
+    if response.status_code != 200:
+        raise HTTPException(status_code=response.status_code, detail="Failed to fetch workflow")
+
+    workflow = schemas.Workflow(**response.json())  # Convert dict to Pydantic model
+
+    workflow_service = WorkflowService(db)
+    try:
+        # Step 1: Create the workflow execution record
+        workflow_execution = await workflow_service.create_workflow(workflow, initial_inputs)
+        print(f"Created workflow execution with ID: {workflow_execution.id}")
+        
+        # Step 2: Start workflow execution in background
+        # Create a new service instance for background task to ensure proper DB session
+        background_service = WorkflowService(db)
+        background_tasks.add_task(
+            background_service.execute_workflow,
+            workflow_execution,
+            workflow,
+            initial_inputs
+        )
+        print(f"Added workflow execution to background tasks")
+        
+        # Return immediately with execution ID and initial status
+        return {
+            "execution_id": workflow_execution.id,
+            "status": "CREATED",
+            "message": "Workflow execution started",
+            "links": {
+                "status": f"/executions/{workflow_execution.id}",
+                "streams": f"/executions/{workflow_execution.id}/streams"
+            }
+        }
+    except Exception as e:
+        print(f"Error creating workflow: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -255,27 +255,76 @@ class WorkflowOrchestrator:
         return graph.compile(checkpointer=self.checkpoint)
 
     def _create_node_function(self, node, node_name):
-        """Create node execution function"""
+        """Create node execution function with step tracking"""
         async def node_fn(state):
             try:
                 if not isinstance(state, WorkflowState):
                     state = WorkflowState(**state)
-                
-                result = await node.process(state)
-                
+
+                # Create or update step record
+                if self.db:
+                    step = self.db.query(models.WorkflowExecutionStep).filter(
+                        models.WorkflowExecutionStep.execution_id == state.execution_id,
+                        models.WorkflowExecutionStep.step_name == node_name
+                    ).first()
+
+                    if not step:
+                        step = models.WorkflowExecutionStep(
+                            execution_id=state.execution_id,
+                            step_name=node_name,
+                            input_data=self._serialize(state.node_inputs.get(node_name, {})),
+                            start_time=datetime.utcnow(),
+                            finished=False
+                        )
+                        self.db.add(step)
+                        self.db.commit()
+
+                # Execute node
+                try:
+                    result = await node.process(state)
+                    
+                    # Update step with success result
+                    if self.db and step:
+                        step.output_data = self._serialize(result.node_outputs.get(node_name, {}))
+                        step.end_time = datetime.utcnow()
+                        step.finished = True
+                        
+                        # Store additional execution details
+                        if hasattr(node, 'execution_logs'):
+                            step.logs = self._serialize(node.execution_logs)
+                        if hasattr(node, 'message_history'):
+                            step.messages = self._serialize(node.message_history)
+                        if hasattr(node, 'tool_calls'):
+                            step.tools = self._serialize(node.tool_calls)
+                        if hasattr(node, 'traces'):
+                            step.traces = self._serialize(node.traces)
+                        
+                        self.db.commit()
+
+                except Exception as node_error:
+                    # Update step with error information
+                    if self.db and step:
+                        step.error_message = str(node_error)
+                        step.end_time = datetime.utcnow()
+                        step.finished = True
+                        self.db.commit()
+                    raise
+
                 if not isinstance(result, WorkflowState):
                     if isinstance(result, dict):
                         state.node_outputs[node_name] = result
                         state.current_node = node_name
                         result = state
-                
+
                 return result
+
             except Exception as e:
                 print(f"Error in node {node_name}: {str(e)}")
                 if isinstance(state, WorkflowState):
                     state.error = f"Error in node {node_name}: {str(e)}"
                     return state
                 raise
+
         return node_fn
 
     async def execute_workflow(self, workflow_id: int, workflow_config: Dict[str, Any], execution_id: int, initial_inputs: Dict[str, Any] = None):

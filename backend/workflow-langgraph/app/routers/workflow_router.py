@@ -283,3 +283,85 @@ async def execute_workflow_sync(
     except Exception as e:
         print(f"Error executing workflow: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/executions/{execution_id}/steps")
+async def get_execution_steps(
+    execution_id: int,
+    include_details: bool = Query(False, description="Include detailed step data like logs, traces, etc."),
+    db: Session = Depends(get_db)
+):
+    """Get detailed progress of workflow execution steps"""
+    workflow_service = WorkflowService(db)
+    try:
+        # Verify execution exists
+        execution = await workflow_service.get_execution(execution_id)
+        if not execution:
+            raise HTTPException(status_code=404, detail=f"Execution {execution_id} not found")
+        
+        # Get all steps for this execution
+        steps = db.query(models.WorkflowExecutionStep).filter(
+            models.WorkflowExecutionStep.execution_id == execution_id
+        ).order_by(models.WorkflowExecutionStep.start_time).all()
+        
+        # Calculate execution progress
+        total_steps = len(steps)
+        completed_steps = len([step for step in steps if step.finished])
+        current_step = next((step.step_name for step in steps if not step.finished), None)
+        
+        response = {
+            "execution_id": execution_id,
+            "status": execution.status,
+            "progress": {
+                "total_steps": total_steps,
+                "completed_steps": completed_steps,
+                "current_step": current_step,
+                "percentage": (completed_steps / total_steps * 100) if total_steps > 0 else 0,
+                "has_errors": any(step.error_message for step in steps)
+            },
+            "steps": []
+        }
+        
+        # Build step details
+        for step in steps:
+            step_info = {
+                "step_id": step.step_id,
+                "name": step.step_name,
+                "status": "COMPLETED" if step.finished else "RUNNING" if step.step_name == current_step else "PENDING",
+                "start_time": step.start_time,
+                "end_time": step.end_time,
+                "duration": (step.end_time - step.start_time).total_seconds() if step.end_time and step.start_time else None,
+                "error": step.error_message
+            }
+            
+            if include_details:
+                step_info.update({
+                    "input_data": step.input_data,
+                    "output_data": step.output_data,
+                    "logs": step.logs or [],
+                    "traces": step.traces or [],
+                    "messages": step.messages or [],
+                    "tools": step.tools or []
+                })
+            
+            response["steps"].append(step_info)
+        
+        # Add timing information with safety checks
+        steps_with_start_time = [step for step in steps if step.start_time is not None]
+        steps_with_end_time = [step for step in steps if step.end_time is not None]
+        
+        response["timing"] = {
+            "started_at": min(step.start_time for step in steps_with_start_time) if steps_with_start_time else None,
+            "completed_at": max(step.end_time for step in steps_with_end_time) if steps_with_end_time and completed_steps == total_steps else None,
+            "total_duration": sum(
+                (step.end_time - step.start_time).total_seconds() 
+                for step in steps 
+                if step.end_time and step.start_time
+            ) if steps_with_end_time else 0
+        }
+        
+        return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

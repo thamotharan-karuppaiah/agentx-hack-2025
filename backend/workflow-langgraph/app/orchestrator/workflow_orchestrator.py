@@ -230,7 +230,7 @@ class WorkflowOrchestrator:
 
         # Create nodes
         for node_config in workflow_config["nodes"]:
-            node_name = node_config.get("name") or node_config["id"]
+            node_name = node_config.get("data", {}).get("name") or node_config["id"]
             node_mapping[node_config["id"]] = node_name
             
             node = await self.create_node(node_config)
@@ -256,6 +256,8 @@ class WorkflowOrchestrator:
 
     def _create_node_function(self, node, node_name):
         """Create node execution function with step tracking"""
+        is_end_node = node_name.lower().startswith('end') or node_name.endswith('_end')
+        
         async def node_fn(state):
             try:
                 if not isinstance(state, WorkflowState):
@@ -285,7 +287,17 @@ class WorkflowOrchestrator:
                     
                     # Update step with success result
                     if self.db and step:
-                        step.output_data = self._serialize(result.node_outputs.get(node_name, {}))
+                        # For end nodes, ensure we capture the final output
+                        if is_end_node:
+                            output_data = {
+                                "output": result.output if hasattr(result, 'output') else None,
+                                "final_state": self._serialize(result.node_outputs),
+                                "node_output": self._serialize(result.node_outputs.get(node_name, {}))
+                            }
+                        else:
+                            output_data = self._serialize(result.node_outputs.get(node_name, {}))
+                        
+                        step.output_data = output_data
                         step.end_time = datetime.utcnow()
                         step.finished = True
                         
@@ -299,6 +311,18 @@ class WorkflowOrchestrator:
                         if hasattr(node, 'traces'):
                             step.traces = self._serialize(node.traces)
                         
+                        # For end nodes, store the final workflow state
+                        if is_end_node:
+                            step.logs = step.logs or []
+                            step.logs.append({
+                                "type": "workflow_completion",
+                                "timestamp": datetime.utcnow().isoformat(),
+                                "details": {
+                                    "final_state": self._serialize(result.node_outputs),
+                                    "error": result.error if hasattr(result, 'error') else None
+                                }
+                            })
+                        
                         self.db.commit()
 
                 except Exception as node_error:
@@ -307,6 +331,16 @@ class WorkflowOrchestrator:
                         step.error_message = str(node_error)
                         step.end_time = datetime.utcnow()
                         step.finished = True
+                        
+                        # For end nodes, log the error in the workflow context
+                        if is_end_node:
+                            step.logs = step.logs or []
+                            step.logs.append({
+                                "type": "workflow_error",
+                                "timestamp": datetime.utcnow().isoformat(),
+                                "error": str(node_error)
+                            })
+                        
                         self.db.commit()
                     raise
 

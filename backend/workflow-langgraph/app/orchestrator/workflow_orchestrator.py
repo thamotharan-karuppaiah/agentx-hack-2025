@@ -17,6 +17,8 @@ from datetime import datetime
 import json
 import asyncpg
 
+from app import models
+
 
 class CustomJSONEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -293,14 +295,42 @@ class WorkflowOrchestrator:
 
             config = {"configurable": {"thread_id": "1"}}
 
+            # Update execution status to RUNNING
+            if self.db:
+                execution = self.db.query(models.WorkflowExecution).filter_by(id=execution_id).first()
+                if execution:
+                    execution.status = "RUNNING"
+                    execution.started_at = datetime.utcnow()
+                    self.db.commit()
+
             final_state = await graph.ainvoke(initial_state, config=config)
             if not isinstance(final_state, WorkflowState):
                 final_state = WorkflowState(**final_state)
 
-            return self._process_final_state(final_state, execution_id)
+            result = self._process_final_state(final_state, execution_id)
+
+            # Update execution with final state and results
+            if self.db:
+                execution = self.db.query(models.WorkflowExecution).filter_by(id=execution_id).first()
+                if execution:
+                    execution.status = "COMPLETED"
+                    execution.completed_at = datetime.utcnow()
+                    execution.result = json.dumps(result, cls=CustomJSONEncoder)
+                    execution.state = json.dumps(final_state.dict(), cls=CustomJSONEncoder)
+                    self.db.commit()
+
+            return result
 
         except Exception as e:
             print(f"Error executing workflow: {str(e)}")
+            # Update execution status to ERROR
+            if self.db:
+                execution = self.db.query(models.WorkflowExecution).filter_by(id=execution_id).first()
+                if execution:
+                    execution.status = "ERROR"
+                    execution.error = str(e)
+                    execution.completed_at = datetime.utcnow()
+                    self.db.commit()
             raise
 
     def _process_final_state(self, final_state: WorkflowState, execution_id: int):

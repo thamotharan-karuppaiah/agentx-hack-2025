@@ -79,6 +79,9 @@ class WorkflowService:
     async def execute_workflow(self, workflow_execution: models.WorkflowExecution, workflow: schemas.Workflow, initial_inputs: Dict[str, Any] = None) -> models.WorkflowExecution:
         """Execute a prepared workflow"""
         try:
+            # Ensure workflow_execution is attached to session
+            workflow_execution = self.db.merge(workflow_execution)
+            
             # Update status to RUNNING with retry logic
             retries = 3
             for attempt in range(retries):

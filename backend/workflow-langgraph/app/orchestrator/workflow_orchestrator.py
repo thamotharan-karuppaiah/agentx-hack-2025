@@ -38,73 +38,6 @@ class WorkflowOrchestrator:
         self.db = db
         self.nodes = {}
         self.graph = None
-        self.checkpoint = None
-        self.conn = None
-        
-    async def initialize(self):
-        """Call this method explicitly to set up the database checkpoint asynchronously."""
-        await self._setup_checkpoint()
-
-    @classmethod
-    async def setup_pool(cls):
-        """Create a connection pool once at startup"""
-        if cls._pool is None:
-            cls._pool = await asyncpg.create_pool(
-                dsn=settings.DATABASE_URL, 
-                min_size=1, 
-                max_size=10
-            )
-
-    async def _setup_checkpoint(self):
-        """Use the shared connection pool instead of opening new connections"""
-        await self.setup_pool()
-        self.conn = await self._pool.acquire()
-        self.checkpoint = AsyncPostgresSaver(self.conn)
-        await self.checkpoint.setup()
-
-        #  self.conn = await AsyncConnection.connect(
-        #     settings.DATABASE_URL,
-        #     prepare_threshold=0
-        # )
-        # self.checkpoint = AsyncPostgresSaver(self.conn)
-        # await self.checkpoint.setup()
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Cleanup resources"""
-        try:
-            await self._cleanup_nodes()
-            await self._cleanup_connections()
-            if self._pool is not None:
-                await self._pool.close()  # ✅ Close the connection pool when shutting down
-                self._pool = None
-        except Exception as e:
-            print(f"Error during cleanup: {str(e)}")
-            if exc_type is None:
-                raise
-
-    async def _cleanup_nodes(self):
-        """Cleanup node resources"""
-        for node_name, node in self.nodes.items():
-            if hasattr(node, 'cleanup'):
-                try:
-                    if asyncio.iscoroutinefunction(node.cleanup):
-                        await node.cleanup()
-                    else:
-                        node.cleanup()
-                except Exception as e:
-                    print(f"Error cleaning up node {node_name}: {str(e)}")
-
-    async def _cleanup_connections(self):
-        """Cleanup database connections"""
-        if self.conn:
-            try:
-                await self._pool.release(self.conn)  # ✅ Properly return connection to pool
-                self.conn = None
-            except Exception as e:
-                print(f"Error closing database connection: {str(e)}")
 
     def _serialize(self, data: Any) -> Any:
         """Unified serialization method"""
@@ -252,7 +185,7 @@ class WorkflowOrchestrator:
             else:
                 graph.add_edge(source, target)
 
-        return graph.compile(checkpointer=self.checkpoint)
+        return graph.compile()
 
     def _create_node_function(self, node, node_name):
         """Create node execution function with step tracking"""

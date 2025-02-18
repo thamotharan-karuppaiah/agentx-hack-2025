@@ -412,8 +412,7 @@ async def create_workflow_by_id(
             "status": "CREATED",
             "message": "Workflow execution started",
             "links": {
-                "status": f"/executions/{workflow_execution.id}",
-                "streams": f"/executions/{workflow_execution.id}/streams"
+                "status": f"/executions/{workflow_execution.id}/steps?include_details=true"
             }
         }
     except Exception as e:

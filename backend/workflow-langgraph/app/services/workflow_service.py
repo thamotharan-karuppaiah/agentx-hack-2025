@@ -97,62 +97,63 @@ class WorkflowService:
                         raise
                     await asyncio.sleep(1)  # Wait before retrying
 
-            async with WorkflowOrchestrator(self.db) as orchestrator:
-                try:
-                    # Execute the workflow with streaming support
-                    result = await orchestrator.execute_workflow(
-                        workflow_execution.id,
-                        workflow.config.dict(),
-                        workflow_execution.id,
-                        initial_inputs
-                    )
+            # Create orchestrator instance directly instead of using async with
+            orchestrator = WorkflowOrchestrator(self.db)
+            try:
+                # Execute the workflow with streaming support
+                result = await orchestrator.execute_workflow(
+                    workflow_execution.id,
+                    workflow.config.dict(),
+                    workflow_execution.id,
+                    initial_inputs
+                )
 
-                    # Update workflow execution status and serialize the result
-                    workflow_execution.status = "COMPLETED"
-                    workflow_execution.raw_execution_json = self._serialize_workflow_data({
-                        "config": workflow.config.dict(),
-                        "initial_inputs": initial_inputs or {},
-                        "result": result
-                    })
-                    
-                    # Commit with retry logic
-                    for attempt in range(retries):
-                        try:
-                            self.db.commit()
-                            print(f"Workflow {workflow_execution.id} completed successfully")
-                            break
-                        except Exception as db_error:
-                            print(f"Database error on attempt {attempt + 1}: {str(db_error)}")
-                            self.db.rollback()
-                            if attempt == retries - 1:  # Last attempt
-                                raise
-                            await asyncio.sleep(1)  # Wait before retrying
+                # Update workflow execution status and serialize the result
+                workflow_execution.status = "COMPLETED"
+                workflow_execution.raw_execution_json = self._serialize_workflow_data({
+                    "config": workflow.config.dict(),
+                    "initial_inputs": initial_inputs or {},
+                    "result": result
+                })
+                
+                # Commit with retry logic
+                for attempt in range(retries):
+                    try:
+                        self.db.commit()
+                        print(f"Workflow {workflow_execution.id} completed successfully")
+                        break
+                    except Exception as db_error:
+                        print(f"Database error on attempt {attempt + 1}: {str(db_error)}")
+                        self.db.rollback()
+                        if attempt == retries - 1:  # Last attempt
+                            raise
+                        await asyncio.sleep(1)  # Wait before retrying
 
-                except Exception as exec_error:
-                    print(f"Error executing workflow {workflow_execution.id}: {str(exec_error)}")
-                    workflow_execution.status = "ERROR"
-                    workflow_execution.error_message = str(exec_error)
-                    workflow_execution.raw_execution_json = self._serialize_workflow_data({
-                        "config": workflow.config.dict(),
-                        "initial_inputs": initial_inputs or {},
-                        "error": str(exec_error)
-                    })
-                    
-                    # Commit error status with retry logic
-                    for attempt in range(retries):
-                        try:
-                            self.db.commit()
-                            break
-                        except Exception as db_error:
-                            print(f"Database error on attempt {attempt + 1}: {str(db_error)}")
-                            self.db.rollback()
-                            if attempt == retries - 1:  # Last attempt
-                                raise
-                            await asyncio.sleep(1)  # Wait before retrying
-                    
-                    raise exec_error
+            except Exception as exec_error:
+                print(f"Error executing workflow {workflow_execution.id}: {str(exec_error)}")
+                workflow_execution.status = "ERROR"
+                workflow_execution.error_message = str(exec_error)
+                workflow_execution.raw_execution_json = self._serialize_workflow_data({
+                    "config": workflow.config.dict(),
+                    "initial_inputs": initial_inputs or {},
+                    "error": str(exec_error)
+                })
+                
+                # Commit error status with retry logic
+                for attempt in range(retries):
+                    try:
+                        self.db.commit()
+                        break
+                    except Exception as db_error:
+                        print(f"Database error on attempt {attempt + 1}: {str(db_error)}")
+                        self.db.rollback()
+                        if attempt == retries - 1:  # Last attempt
+                            raise
+                        await asyncio.sleep(1)  # Wait before retrying
+                
+                raise exec_error
 
-                return workflow_execution
+            return workflow_execution
 
         except Exception as e:
             print(f"Error in execute_workflow: {str(e)}")

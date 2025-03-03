@@ -1,24 +1,39 @@
+# FastAPI
 fastapi
 uvicorn
 python-dotenv
+
+# Pydantic
 pydantic
+pydantic-settings>=2.0.0
 typing_extensions
-# LangChain ecosystem with pinned versions:
+
+# LangChain ecosystem:
 langchain-core
 langchain-community
 langchain
 langchain-openai
-langsmith
 langgraph
 langgraph-checkpoint-postgres
+
+# LLM
 openai
 transformers
+
+# Database
 psycopg2-binary
-pydantic-settings>=2.0.0
+sqlalchemy
+asyncpg
+
+# HTTP
+httpx
+requests
+aiohttp
+
+# Testing
 pytest
 pytest-asyncio
 pytest-mock
-networkx
-matplotlib
+
+# Development
 ipython
-pygraphviz
